@@ -16,30 +16,15 @@ export const StatusBar: React.FC<StatusBarProps> = ({ status, isConnected }) => 
     );
   }
 
-  const formatPhase = (phase: string | null) => {
-    if (!phase) return 'Off';
-    return phase.charAt(0).toUpperCase() + phase.slice(1);
-  };
-
-  const getPhaseColor = (phase: string | null) => {
-    switch (phase) {
-      case 'signed':
-        return 'badge-info';
-      case 'unsigned':
-        return 'badge-warning';
-      case 'emergency':
-        return 'badge-error';
-      default:
-        return 'badge-secondary';
-    }
-  };
-
   return (
     <>
       <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
           <div className={`connection-dot ${isConnected ? 'connected' : 'disconnected'}`} />
           {isConnected ? 'Connected' : 'Disconnected'}
+        </div>
+        <div style={{ fontSize: '0.9rem', color: '#888' }}>
+          Chain: {status.chain.toUpperCase()}
         </div>
       </div>
 
@@ -51,24 +36,30 @@ export const StatusBar: React.FC<StatusBarProps> = ({ status, isConnected }) => 
         </div>
 
         <div className="status-card">
-          <div className="label">Active Validators</div>
-          <div className="value">{status.activeValidators || '—'}</div>
-        </div>
-
-        <div className="status-card">
-          <div className="label">Election Phase</div>
-          <div className="value">
-            <span className={`badge ${getPhaseColor(status.electionPhase)}`}>
-              {formatPhase(status.electionPhase)}
-            </span>
+          <div className="label">Relay Chain Block</div>
+          <div className="value">{status.lastBlockRC.toLocaleString()}</div>
+          <div className="subvalue">
+            <span className={`connection-dot ${status.isConnectedRC ? 'connected' : 'disconnected'}`} style={{ marginRight: '4px' }} />
+            {status.isConnectedRC ? 'Connected' : 'Disconnected'}
           </div>
         </div>
 
         <div className="status-card">
-          <div className="label">Last Block</div>
-          <div className="value">{status.lastBlock.toLocaleString()}</div>
+          <div className="label">Asset Hub Block</div>
+          <div className="value">{status.lastBlockAH.toLocaleString()}</div>
           <div className="subvalue">
+            <span className={`connection-dot ${status.isConnectedAH ? 'connected' : 'disconnected'}`} style={{ marginRight: '4px' }} />
+            {status.isConnectedAH ? 'Connected' : 'Disconnected'}
+          </div>
+        </div>
+
+        <div className="status-card">
+          <div className="label">Last Update</div>
+          <div className="value">
             {new Date(status.lastUpdateTime).toLocaleTimeString()}
+          </div>
+          <div className="subvalue">
+            {new Date(status.lastUpdateTime).toLocaleDateString()}
           </div>
         </div>
       </div>

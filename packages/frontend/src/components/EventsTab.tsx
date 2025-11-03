@@ -1,0 +1,128 @@
+import { useState } from 'react';
+import { useEvents, useStatus } from '../hooks/useApi';
+import type { BlockchainEvent } from '@staking-cc/shared';
+
+export const EventsTab: React.FC = () => {
+  const [activeChain, setActiveChain] = useState<'rc' | 'ah'>('ah');
+  const [searchTerm, setSearchTerm] = useState('');
+  const { events, loading, refetch } = useEvents(activeChain, 500);
+  const { status } = useStatus();
+
+  const getSubscanUrl = (eventId: string) => {
+    if (!status) return '#';
+    const chain = status.chain;
+    const baseUrl = chain === 'kusama'
+      ? 'https://kusama.subscan.io'
+      : chain === 'polkadot'
+      ? 'https://polkadot.subscan.io'
+      : 'https://westend.subscan.io';
+    return `${baseUrl}/event/${eventId}`;
+  };
+
+  const filteredEvents = events.filter((event) => {
+    if (!searchTerm) return true;
+    return (
+      event.eventType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      event.eventId.includes(searchTerm) ||
+      event.blockNumber.toString().includes(searchTerm)
+    );
+  });
+
+  const renderEventsTable = (events: BlockchainEvent[]) => {
+    if (loading) {
+      return (
+        <div className="loading">
+          <div className="loading-spinner" />
+          <div>Loading {activeChain === 'rc' ? 'Relay Chain' : 'Asset Hub'} events...</div>
+        </div>
+      );
+    }
+
+    if (events.length === 0) {
+      return (
+        <div className="empty-state">
+          <div className="empty-state-icon">🎯</div>
+          <div>No events found</div>
+        </div>
+      );
+    }
+
+    return (
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Event ID</th>
+            <th>Block</th>
+            <th>Event Type</th>
+            <th>Data (Preview)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((event) => (
+            <tr key={`${event.blockNumber}-${event.id}`}>
+              <td>
+                <a
+                  href={getSubscanUrl(event.eventId)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#0066cc', textDecoration: 'none' }}
+                >
+                  {event.eventId}
+                </a>
+              </td>
+              <td>#{event.blockNumber.toLocaleString()}</td>
+              <td>
+                <code style={{ fontSize: '0.85rem' }}>{event.eventType}</code>
+              </td>
+              <td style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <small>{event.data.substring(0, 100)}{event.data.length > 100 ? '...' : ''}</small>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: '20px' }}>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
+          <button
+            className={`btn ${activeChain === 'rc' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setActiveChain('rc')}
+          >
+            Relay Chain Events
+          </button>
+          <button
+            className={`btn ${activeChain === 'ah' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setActiveChain('ah')}
+          >
+            Asset Hub Events
+          </button>
+          <button className="btn btn-secondary" onClick={refetch}>
+            Refresh
+          </button>
+          <input
+            type="text"
+            placeholder="Search by event type, ID, or block..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              border: '1px solid #ddd',
+              borderRadius: '4px',
+              flex: 1,
+              minWidth: '200px'
+            }}
+          />
+        </div>
+        <div style={{ fontSize: '0.9rem', color: '#666' }}>
+          Showing {filteredEvents.length} of {events.length} events
+        </div>
+      </div>
+
+      {renderEventsTable(filteredEvents)}
+    </div>
+  );
+};

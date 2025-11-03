@@ -73,8 +73,8 @@ export const WarningsPanel: React.FC<WarningsPanelProps> = ({ warnings, loading 
                 {getTypeIcon(warning.type)} {warning.type.replace('_', ' ')}
               </span>
             </td>
-            <td>{warning.eraIndex !== null ? `#${warning.eraIndex}` : '—'}</td>
-            <td>{warning.sessionIndex !== null ? warning.sessionIndex : '—'}</td>
+            <td>{warning.eraId !== null ? `#${warning.eraId}` : '—'}</td>
+            <td>{warning.sessionId !== null ? warning.sessionId : '—'}</td>
             <td>{warning.blockNumber.toLocaleString()}</td>
             <td>{warning.message}</td>
             <td>
