@@ -59,11 +59,25 @@ export const EventsTab: React.FC = () => {
   const getSubscanUrl = (eventId: string) => {
     if (!status) return '#';
     const chain = status.chain;
-    const baseUrl = chain === 'kusama'
-      ? 'https://kusama.subscan.io'
-      : chain === 'polkadot'
-      ? 'https://polkadot.subscan.io'
-      : 'https://westend.subscan.io';
+
+    // Use different subscan URLs for Relay Chain vs Asset Hub
+    let baseUrl: string;
+    if (activeChain === 'ah') {
+      // Asset Hub subscan URLs
+      baseUrl = chain === 'kusama'
+        ? 'https://assethub-kusama.subscan.io'
+        : chain === 'polkadot'
+        ? 'https://assethub-polkadot.subscan.io'
+        : 'https://assethub-westend.subscan.io';
+    } else {
+      // Relay Chain subscan URLs
+      baseUrl = chain === 'kusama'
+        ? 'https://kusama.subscan.io'
+        : chain === 'polkadot'
+        ? 'https://polkadot.subscan.io'
+        : 'https://westend.subscan.io';
+    }
+
     return `${baseUrl}/event/${eventId}`;
   };
 

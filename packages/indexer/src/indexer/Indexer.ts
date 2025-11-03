@@ -584,8 +584,8 @@ export class Indexer {
    * Process special events that create sessions and eras
    */
   private async processSpecialEvent(event: any, eventType: string, blockNumber: number, blockTimestamp: number): Promise<void> {
-    // Look for stakingRelaychainClient.SessionReportReceived event
-    if (eventType.toLowerCase() === 'stakingrelaychainclient.sessionreportreceived') {
+    // Look for stakingRcClient.SessionReportReceived event
+    if (eventType.toLowerCase() === 'stakingrcclient.sessionreportreceived') {
       await this.handleSessionReportReceived(event, blockNumber, blockTimestamp);
     }
   }
@@ -600,9 +600,9 @@ export class Indexer {
 
       // Extract fields from event
       // Based on https://assethub-kusama.subscan.io/event/11499278-10
-      // Event structure: { endIndex, validatorSet: [...], totalPoints }
+      // Event structure: { endIndex, activationTimestamp, validatorPointsCounts, leftover }
       const endIndex = event.data.endIndex ? event.data.endIndex.toNumber() : null;
-      const totalPoints = event.data.totalPoints ? event.data.totalPoints.toNumber() : 0;
+      const totalPoints = event.data.validatorPointsCounts ? event.data.validatorPointsCounts.toNumber() : 0;
 
       if (endIndex === null) {
         this.logger.warn({ blockNumber, eventData }, 'SessionReportReceived missing endIndex');
@@ -613,13 +613,39 @@ export class Indexer {
 
       // Check if event has activation_timestamp (marks new era)
       // If activation_timestamp is present, this is an era boundary
+      // activationTimestamp is Option<(Moment, EraIndex)> - a tuple with timestamp and era_id
       let activationTimestamp: number | null = null;
+      let eraIdFromTimestamp: number | null = null;
       let isEraStart = false;
 
       // Try to extract activation_timestamp from event data
-      if (event.data.activationTimestamp) {
-        activationTimestamp = event.data.activationTimestamp.toNumber();
-        isEraStart = true;
+      try {
+        const tsField = event.data.activationTimestamp;
+        if (tsField) {
+          // Check if it's an Option type
+          if (typeof tsField.isSome !== 'undefined' && !tsField.isSome) {
+            // None
+            activationTimestamp = null;
+          } else if (typeof tsField.isEmpty !== 'undefined' && tsField.isEmpty) {
+            // Empty
+            activationTimestamp = null;
+          } else if (typeof tsField.unwrap === 'function') {
+            // It's an Option with Some value - unwrap it
+            const unwrapped = tsField.unwrap();
+            // unwrapped should be a tuple (Moment, EraIndex)
+            if (unwrapped && unwrapped.length >= 2) {
+              const timestamp = unwrapped[0];
+              const eraIdx = unwrapped[1];
+              activationTimestamp = timestamp && typeof timestamp.toNumber === 'function' ? timestamp.toNumber() : null;
+              eraIdFromTimestamp = eraIdx && typeof eraIdx.toNumber === 'function' ? eraIdx.toNumber() : null;
+              isEraStart = activationTimestamp !== null;
+              this.logger.info({ activationTimestamp, eraIdFromTimestamp }, 'Extracted from tuple');
+            }
+          }
+        }
+      } catch (e) {
+        this.logger.debug({ error: e }, 'Error extracting activationTimestamp');
+        activationTimestamp = null;
       }
 
       this.logger.info({
@@ -632,13 +658,11 @@ export class Indexer {
 
       // If this is an era start, create/update era
       let eraId: number | null = null;
-      if (isEraStart && activationTimestamp !== null) {
-        // Query current era from Asset Hub
-        const apiAt = await this.apiAH.at(await this.apiAH.rpc.chain.getBlockHash(blockNumber));
-        const currentEraOption = await apiAt.query.staking?.currentEra?.();
+      if (isEraStart && activationTimestamp !== null && eraIdFromTimestamp !== null) {
+        // Use the era_id from the activationTimestamp tuple
+        eraId = eraIdFromTimestamp;
 
-        if (currentEraOption && !currentEraOption.isEmpty) {
-          eraId = (currentEraOption as any).toNumber();
+        if (eraId !== null) {
 
           // Update previous era's end session
           const previousEra = this.db.getLatestEra();
@@ -661,16 +685,40 @@ export class Indexer {
         }
       }
 
+      // Query current era information from Asset Hub
+      const apiAt = await this.apiAH.at(await this.apiAH.rpc.chain.getBlockHash(blockNumber));
+      let activeEraId: number | null = null;
+      let plannedEraId: number | null = null;
+
+      try {
+        // Get active era
+        const activeEraOption = await apiAt.query.staking?.activeEra?.();
+        if (activeEraOption && !activeEraOption.isEmpty) {
+          const activeEra = (activeEraOption as any).toJSON();
+          activeEraId = activeEra?.index || null;
+        }
+
+        // Get planned era (currentEra)
+        const currentEraOption = await apiAt.query.staking?.currentEra?.();
+        if (currentEraOption && !currentEraOption.isEmpty) {
+          plannedEraId = (currentEraOption as any).toNumber();
+        }
+      } catch (e) {
+        this.logger.debug({ error: e }, 'Error querying era info');
+      }
+
       // Create/update session
       this.db.upsertSession({
         sessionId,
         blockNumber,
         activationTimestamp,
         eraId,
+        activeEraId,
+        plannedEraId,
         validatorPointsTotal: totalPoints,
       });
 
-      this.logger.info({ sessionId, eraId, totalPoints }, 'Session created/updated');
+      this.logger.info({ sessionId, eraId, activeEraId, plannedEraId, totalPoints }, 'Session created/updated');
 
     } catch (error) {
       this.logger.error({ error, blockNumber, eventType: 'SessionReportReceived' }, 'Error handling SessionReportReceived');

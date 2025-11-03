@@ -86,13 +86,19 @@ export class StakingDatabase {
         block_number INTEGER NOT NULL,
         activation_timestamp INTEGER,
         era_id INTEGER,
+        active_era_id INTEGER,
+        planned_era_id INTEGER,
         validator_points_total INTEGER NOT NULL,
         FOREIGN KEY (block_number) REFERENCES blocks_ah(block_number) ON DELETE CASCADE,
-        FOREIGN KEY (era_id) REFERENCES eras(era_id) ON DELETE SET NULL
+        FOREIGN KEY (era_id) REFERENCES eras(era_id) ON DELETE SET NULL,
+        FOREIGN KEY (active_era_id) REFERENCES eras(era_id) ON DELETE SET NULL,
+        FOREIGN KEY (planned_era_id) REFERENCES eras(era_id) ON DELETE SET NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_sessions_block ON sessions(block_number);
       CREATE INDEX IF NOT EXISTS idx_sessions_era ON sessions(era_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_active_era ON sessions(active_era_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_planned_era ON sessions(planned_era_id);
 
       -- Eras table
       -- Created from stakingRelaychainClient.SessionReportReceived events with activation_timestamp
@@ -185,6 +191,22 @@ export class StakingDatabase {
     const stmt = this.db.prepare('SELECT * FROM blocks_ah ORDER BY block_number DESC LIMIT 1');
     const row = stmt.get() as any;
     return row ? { blockNumber: row.block_number, timestamp: row.timestamp } : null;
+  }
+
+  deleteBlockRC(blockNumber: number): void {
+    // Delete events first (cascade should handle this, but being explicit)
+    this.db.prepare('DELETE FROM events_rc WHERE block_number = ?').run(blockNumber);
+    // Delete block
+    this.db.prepare('DELETE FROM blocks_rc WHERE block_number = ?').run(blockNumber);
+    this.logger.debug({ blockNumber }, 'Deleted RC block and events');
+  }
+
+  deleteBlockAH(blockNumber: number): void {
+    // Delete events first (cascade should handle this, but being explicit)
+    this.db.prepare('DELETE FROM events_ah WHERE block_number = ?').run(blockNumber);
+    // Delete block
+    this.db.prepare('DELETE FROM blocks_ah WHERE block_number = ?').run(blockNumber);
+    this.logger.debug({ blockNumber }, 'Deleted AH block and events');
   }
 
   getAllBlocksRC(limit: number = 100): Block[] {
@@ -289,11 +311,13 @@ export class StakingDatabase {
   upsertSession(session: Session): void {
     const stmt = this.db.prepare(`
       INSERT INTO sessions (
-        session_id, block_number, activation_timestamp, era_id, validator_points_total
-      ) VALUES (?, ?, ?, ?, ?)
+        session_id, block_number, activation_timestamp, era_id, active_era_id, planned_era_id, validator_points_total
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         block_number = excluded.block_number,
         activation_timestamp = COALESCE(excluded.activation_timestamp, activation_timestamp),
+        active_era_id = COALESCE(excluded.active_era_id, active_era_id),
+        planned_era_id = COALESCE(excluded.planned_era_id, planned_era_id),
         era_id = COALESCE(excluded.era_id, era_id),
         validator_points_total = excluded.validator_points_total
     `);
@@ -303,6 +327,8 @@ export class StakingDatabase {
       session.blockNumber,
       session.activationTimestamp,
       session.eraId,
+      session.activeEraId,
+      session.plannedEraId,
       session.validatorPointsTotal
     );
   }
@@ -315,6 +341,8 @@ export class StakingDatabase {
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
       eraId: row.era_id,
+      activeEraId: row.active_era_id,
+      plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
     } : null;
   }
@@ -327,6 +355,8 @@ export class StakingDatabase {
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
       eraId: row.era_id,
+      activeEraId: row.active_era_id,
+      plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
     } : null;
   }
@@ -339,6 +369,8 @@ export class StakingDatabase {
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
       eraId: row.era_id,
+      activeEraId: row.active_era_id,
+      plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
     }));
   }
@@ -351,6 +383,8 @@ export class StakingDatabase {
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
       eraId: row.era_id,
+      activeEraId: row.active_era_id,
+      plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
     }));
   }

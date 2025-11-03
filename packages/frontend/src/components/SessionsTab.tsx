@@ -92,6 +92,8 @@ export const SessionsTab: React.FC = () => {
             <th>Session ID</th>
             <th>Block Number</th>
             <th>Era ID</th>
+            <th>Active Era ID</th>
+            <th>Planned Era ID</th>
             <th>Activation Time</th>
             <th>Validator Points Total</th>
           </tr>
@@ -108,6 +110,12 @@ export const SessionsTab: React.FC = () => {
               <td>#{session.blockNumber.toLocaleString()}</td>
               <td>
                 {session.eraId !== null ? `Era #${session.eraId}` : '—'}
+              </td>
+              <td>
+                {session.activeEraId !== null ? `Era #${session.activeEraId}` : '—'}
+              </td>
+              <td>
+                {session.plannedEraId !== null ? `Era #${session.plannedEraId}` : '—'}
               </td>
               <td>{formatTimestamp(session.activationTimestamp)}</td>
               <td>{session.validatorPointsTotal.toLocaleString()}</td>

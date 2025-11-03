@@ -13,7 +13,8 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "clean": "turbo run clean && rm -rf node_modules",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "turbo run typecheck",
+    "reimport": "npx tsx scripts/reimport-block.ts ah"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

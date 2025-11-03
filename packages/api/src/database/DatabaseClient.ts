@@ -233,6 +233,8 @@ export class DatabaseClient {
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
       eraId: row.era_id,
+      activeEraId: row.active_era_id,
+      plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
     }));
   }
@@ -249,6 +251,8 @@ export class DatabaseClient {
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
       eraId: row.era_id,
+      activeEraId: row.active_era_id,
+      plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
     };
   }
@@ -262,6 +266,8 @@ export class DatabaseClient {
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
       eraId: row.era_id,
+      activeEraId: row.active_era_id,
+      plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
     }));
   }
