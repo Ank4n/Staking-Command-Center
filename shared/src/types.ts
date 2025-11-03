@@ -60,28 +60,32 @@ export interface RpcConfig {
   kusama: RpcEndpointConfig;
 }
 
+// Sync status types
+export type SyncStatus = 'syncing' | 'in-sync' | 'out-of-sync';
+
+export interface ChainSyncInfo {
+  status: SyncStatus;
+  lastBlockNumber: number;
+  lastBlockTime: number;
+  currentHeight: number;
+  syncProgress?: {
+    target: number;
+    current: number;
+    percentage: number;
+    blocksRemaining: number;
+  };
+}
+
 // API Response types
 export interface ApiStatus {
   chain: ChainType;
   currentEra: number | null;
   currentSession: number | null;
-  lastBlockRC: number;
-  lastBlockAH: number;
   lastUpdateTime: number;
   rpcEndpointRC: string;
   rpcEndpointAH: string;
-  isConnectedRC: boolean;
-  isConnectedAH: boolean;
-  syncProgressRC?: {
-    target: number;
-    current: number;
-    percentage: number;
-  };
-  syncProgressAH?: {
-    target: number;
-    current: number;
-    percentage: number;
-  };
+  relayChain: ChainSyncInfo;
+  assetHub: ChainSyncInfo;
 }
 
 export interface EraDetails extends Era {
@@ -111,21 +115,22 @@ export interface DatabaseConfig {
 }
 
 // Indexer configuration
-export type IndexerMode = 'dev' | 'prod';
-
 export interface IndexerConfig {
-  mode: IndexerMode;
-  backfillBlocks: number; // 10 for dev, 15000 for prod
+  syncBlocks: number; // How many blocks back from current height to sync
 }
 
 // Indexer state
 export interface IndexerState {
   lastProcessedBlockRC: number;
   lastProcessedBlockAH: number;
+  currentHeightRC: number;
+  currentHeightAH: number;
+  targetBlockRC: number;
+  targetBlockAH: number;
+  isSyncingRC: boolean;
+  isSyncingAH: boolean;
   currentEra: number | null;
   currentSession: number | null;
-  isProcessingRC: boolean;
-  isProcessingAH: boolean;
   errorCount: number;
   lastError: string | null;
 }

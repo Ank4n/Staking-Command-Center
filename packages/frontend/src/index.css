@@ -230,6 +230,10 @@ code {
   background: #ef4444;
 }
 
+.connection-dot.syncing {
+  background: #f59e0b;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

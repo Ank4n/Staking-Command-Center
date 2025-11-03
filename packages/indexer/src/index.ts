@@ -12,7 +12,7 @@ async function main() {
 
     // Load configuration
     const config = loadConfig();
-    logger.info({ chain: config.chain, mode: config.mode, backfillBlocks: config.backfillBlocks }, 'Configuration loaded');
+    logger.info({ chain: config.chain, syncBlocks: config.syncBlocks }, 'Configuration loaded');
 
     // Ensure data directory exists
     const dataDir = path.dirname(config.dbPath);
@@ -55,7 +55,7 @@ async function main() {
     logger.info({ chain: chainAH.toString(), version: versionAH.toString() }, 'Asset Hub info');
 
     // Initialize and start indexer for both chains
-    const indexer = new Indexer(apiRC, apiAH, db, logger, config.backfillBlocks);
+    const indexer = new Indexer(apiRC, apiAH, db, logger, config.syncBlocks);
     await indexer.start();
 
     // Handle graceful shutdown

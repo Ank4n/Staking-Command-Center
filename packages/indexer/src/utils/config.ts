@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import type { ChainType, IndexerMode } from '@staking-cc/shared';
+import type { ChainType } from '@staking-cc/shared';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -26,8 +26,7 @@ dotenv.config({ path: path.join(projectRoot, '.env') });
 
 export interface Config {
   chain: ChainType;
-  mode: IndexerMode;
-  backfillBlocks: number;
+  syncBlocks: number;
   dbPath: string;
   maxEras: number;
   customRpcEndpoint?: string;
@@ -40,14 +39,8 @@ export function loadConfig(): Config {
     throw new Error('CHAIN must be set to "polkadot", "kusama", or "westend"');
   }
 
-  // Mode: dev or prod (defaults to dev)
-  const mode = (process.env.INDEXER_MODE || 'dev') as IndexerMode;
-  if (mode !== 'dev' && mode !== 'prod') {
-    throw new Error('INDEXER_MODE must be either "dev" or "prod"');
-  }
-
-  // Backfill blocks: 10 for dev, 15000 for prod
-  const backfillBlocks = mode === 'dev' ? 10 : 15000;
+  // Sync blocks: how many blocks back from current height to sync (defaults to 10)
+  const syncBlocks = parseInt(process.env.SYNC_BLOCKS || '10', 10);
 
   // Resolve DB path relative to project root
   // Each chain gets its own database file
@@ -61,8 +54,7 @@ export function loadConfig(): Config {
 
   return {
     chain,
-    mode,
-    backfillBlocks,
+    syncBlocks,
     dbPath,
     maxEras,
     customRpcEndpoint,

@@ -36,9 +36,11 @@ dotenv.config({ path: path.join(projectRoot, '.env') });
 
 const API_PORT = parseInt(process.env.API_PORT || '4000', 10);
 const API_HOST = process.env.API_HOST || '0.0.0.0';
+const CHAIN = process.env.CHAIN || 'kusama';
 
 // Resolve DB path relative to project root
-const dbPathEnv = process.env.DB_PATH || './data/staking.db';
+// Use chain-specific database file (same as indexer)
+const dbPathEnv = process.env.DB_PATH || `./data/staking-${CHAIN}.db`;
 const DB_PATH = path.isAbsolute(dbPathEnv)
   ? dbPathEnv
   : path.join(projectRoot, dbPathEnv);

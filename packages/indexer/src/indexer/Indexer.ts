@@ -13,12 +13,12 @@ export class Indexer {
   private unsubscribeRC: (() => void) | null = null;
   private unsubscribeAH: (() => void) | null = null;
 
-  constructor(apiRC: ApiPromise, apiAH: ApiPromise, db: StakingDatabase, logger: Logger, backfillBlocks: number) {
+  constructor(apiRC: ApiPromise, apiAH: ApiPromise, db: StakingDatabase, logger: Logger, syncBlocks: number) {
     this.apiRC = apiRC;
     this.apiAH = apiAH;
     this.db = db;
     this.logger = logger.child({ component: 'Indexer' });
-    this.backfillBlocks = backfillBlocks;
+    this.backfillBlocks = syncBlocks;
   }
 
   /**
@@ -44,34 +44,52 @@ export class Indexer {
 
       this.logger.info({ currentBlockRC, currentBlockAH }, 'Current finalized blocks');
 
-      // Determine starting blocks for backfill
-      const lastBlockRCStr = this.db.getState('lastProcessedBlockRC');
-      const lastBlockAHStr = this.db.getState('lastProcessedBlockAH');
+      // Calculate target blocks: current height - syncBlocks (but not less than 1)
+      const targetBlockRC = Math.max(1, currentBlockRC - this.backfillBlocks);
+      const targetBlockAH = Math.max(1, currentBlockAH - this.backfillBlocks);
 
-      let startBlockRC: number;
-      let startBlockAH: number;
+      this.logger.info({
+        targetBlockRC,
+        targetBlockAH,
+        syncBlocks: this.backfillBlocks
+      }, 'Target sync range calculated');
 
-      if (lastBlockRCStr) {
-        startBlockRC = parseInt(lastBlockRCStr, 10) + 1;
-        this.logger.info({ lastBlock: parseInt(lastBlockRCStr, 10), startBlockRC }, 'Resuming Relay Chain from last processed block');
-      } else {
-        startBlockRC = Math.max(1, currentBlockRC - this.backfillBlocks);
-        this.logger.info({ startBlockRC, blocksBack: this.backfillBlocks }, 'Initial start: backfilling Relay Chain');
+      // Count missing blocks before syncing
+      let missingBlocksCountRC = 0;
+      for (let i = targetBlockRC; i <= currentBlockRC; i++) {
+        if (!this.db.blockExistsRC(i)) missingBlocksCountRC++;
       }
 
-      if (lastBlockAHStr) {
-        startBlockAH = parseInt(lastBlockAHStr, 10) + 1;
-        this.logger.info({ lastBlock: parseInt(lastBlockAHStr, 10), startBlockAH }, 'Resuming Asset Hub from last processed block');
-      } else {
-        startBlockAH = Math.max(1, currentBlockAH - this.backfillBlocks);
-        this.logger.info({ startBlockAH, blocksBack: this.backfillBlocks }, 'Initial start: backfilling Asset Hub');
+      let missingBlocksCountAH = 0;
+      for (let i = targetBlockAH; i <= currentBlockAH; i++) {
+        if (!this.db.blockExistsAH(i)) missingBlocksCountAH++;
       }
 
-      // Process backfill for both chains in parallel
+      // Store current heights, targets, and total missing blocks in state
+      this.db.setMultipleStates({
+        'currentHeightRC': currentBlockRC.toString(),
+        'currentHeightAH': currentBlockAH.toString(),
+        'targetBlockRC': targetBlockRC.toString(),
+        'targetBlockAH': targetBlockAH.toString(),
+        'totalMissingBlocksRC': missingBlocksCountRC.toString(),
+        'totalMissingBlocksAH': missingBlocksCountAH.toString(),
+        'syncedBlocksRC': '0',
+        'syncedBlocksAH': '0',
+        'isSyncingRC': 'true',
+        'isSyncingAH': 'true',
+      });
+
+      // Sync missing blocks in range for both chains in parallel
       await Promise.all([
-        this.catchUpRC(startBlockRC, currentBlockRC),
-        this.catchUpAH(startBlockAH, currentBlockAH),
+        this.syncMissingBlocksRC(targetBlockRC, currentBlockRC),
+        this.syncMissingBlocksAH(targetBlockAH, currentBlockAH),
       ]);
+
+      // Mark syncing as complete
+      this.db.setMultipleStates({
+        'isSyncingRC': 'false',
+        'isSyncingAH': 'false',
+      });
 
       // Subscribe to new finalized blocks for both chains
       this.isRunning = true;
@@ -86,71 +104,179 @@ export class Indexer {
   }
 
   /**
-   * Catch up with missed blocks on Relay Chain
+   * Sync missing blocks on Relay Chain within the target range
    */
-  private async catchUpRC(fromBlock: number, toBlock: number): Promise<void> {
+  private async syncMissingBlocksRC(fromBlock: number, toBlock: number): Promise<void> {
     if (fromBlock > toBlock) {
-      this.logger.info('Relay Chain already caught up');
+      this.logger.info('Relay Chain already synced');
       return;
     }
 
-    const totalBlocks = toBlock - fromBlock + 1;
-    this.logger.info({ fromBlock, toBlock, totalBlocks }, 'Catching up Relay Chain');
-
+    // Find missing blocks in range
+    const missingBlocks: number[] = [];
     for (let i = fromBlock; i <= toBlock; i++) {
-      try {
-        await this.processBlockByNumberRC(i);
-
-        if ((i - fromBlock + 1) % 10 === 0 || i === toBlock) {
-          const processed = i - fromBlock + 1;
-          this.logger.info({
-            processed,
-            total: totalBlocks,
-            progress: `${((processed / totalBlocks) * 100).toFixed(1)}%`,
-            chain: 'RC'
-          }, 'Relay Chain catch-up progress');
-        }
-      } catch (error) {
-        this.logger.error({ error, blockNumber: i }, 'Error processing RC block during catch-up');
-        // Continue with next block
+      if (!this.db.blockExistsRC(i)) {
+        missingBlocks.push(i);
       }
     }
 
-    this.logger.info({ totalBlocks }, 'Relay Chain catch-up completed');
+    if (missingBlocks.length === 0) {
+      this.logger.info({ fromBlock, toBlock }, 'Relay Chain: all blocks already synced');
+      return;
+    }
+
+    const totalBlocks = missingBlocks.length;
+    this.logger.info({ fromBlock, toBlock, missingBlocks: totalBlocks, totalRange: toBlock - fromBlock + 1 }, 'Syncing missing blocks on Relay Chain');
+
+    let processedCount = 0;
+    const failedBlocks: { blockNumber: number; error: string }[] = [];
+
+    for (const blockNumber of missingBlocks) {
+      let success = false;
+      let lastError: any = null;
+
+      // Retry up to 3 times
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await this.processBlockByNumberRC(blockNumber);
+          success = true;
+          break;
+        } catch (error) {
+          lastError = error;
+          this.logger.warn({ error, blockNumber, attempt }, `Error processing RC block (attempt ${attempt}/3)`);
+
+          // Wait before retry (exponential backoff: 1s, 2s, 4s)
+          if (attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)));
+          }
+        }
+      }
+
+      if (success) {
+        processedCount++;
+
+        // Update sync progress in state after each block
+        this.db.setMultipleStates({
+          'syncedBlocksRC': processedCount.toString(),
+          'lastProcessedBlockRC': blockNumber.toString(),
+        });
+
+        if (processedCount % 10 === 0 || processedCount === totalBlocks) {
+          const progress = ((processedCount / totalBlocks) * 100).toFixed(1);
+          this.logger.info({
+            processed: processedCount,
+            total: totalBlocks,
+            progress: `${progress}%`,
+            chain: 'RC'
+          }, 'Relay Chain sync progress');
+        }
+      } else {
+        failedBlocks.push({
+          blockNumber,
+          error: lastError instanceof Error ? lastError.message : String(lastError),
+        });
+        this.logger.error({ blockNumber, error: lastError }, 'Failed to process RC block after 3 attempts');
+      }
+    }
+
+    if (failedBlocks.length > 0) {
+      this.logger.error({
+        totalBlocks,
+        processedCount,
+        failedCount: failedBlocks.length,
+        failedBlocks: failedBlocks.slice(0, 10), // Show first 10
+      }, 'Relay Chain sync completed with errors');
+    } else {
+      this.logger.info({ totalBlocks, processedCount }, 'Relay Chain sync completed successfully');
+    }
   }
 
   /**
-   * Catch up with missed blocks on Asset Hub
+   * Sync missing blocks on Asset Hub within the target range
    */
-  private async catchUpAH(fromBlock: number, toBlock: number): Promise<void> {
+  private async syncMissingBlocksAH(fromBlock: number, toBlock: number): Promise<void> {
     if (fromBlock > toBlock) {
-      this.logger.info('Asset Hub already caught up');
+      this.logger.info('Asset Hub already synced');
       return;
     }
 
-    const totalBlocks = toBlock - fromBlock + 1;
-    this.logger.info({ fromBlock, toBlock, totalBlocks }, 'Catching up Asset Hub');
-
+    // Find missing blocks in range
+    const missingBlocks: number[] = [];
     for (let i = fromBlock; i <= toBlock; i++) {
-      try {
-        await this.processBlockByNumberAH(i);
-
-        if ((i - fromBlock + 1) % 10 === 0 || i === toBlock) {
-          const processed = i - fromBlock + 1;
-          this.logger.info({
-            processed,
-            total: totalBlocks,
-            progress: `${((processed / totalBlocks) * 100).toFixed(1)}%`,
-            chain: 'AH'
-          }, 'Asset Hub catch-up progress');
-        }
-      } catch (error) {
-        this.logger.error({ error, blockNumber: i }, 'Error processing AH block during catch-up');
-        // Continue with next block
+      if (!this.db.blockExistsAH(i)) {
+        missingBlocks.push(i);
       }
     }
 
-    this.logger.info({ totalBlocks }, 'Asset Hub catch-up completed');
+    if (missingBlocks.length === 0) {
+      this.logger.info({ fromBlock, toBlock }, 'Asset Hub: all blocks already synced');
+      return;
+    }
+
+    const totalBlocks = missingBlocks.length;
+    this.logger.info({ fromBlock, toBlock, missingBlocks: totalBlocks, totalRange: toBlock - fromBlock + 1 }, 'Syncing missing blocks on Asset Hub');
+
+    let processedCount = 0;
+    const failedBlocks: { blockNumber: number; error: string }[] = [];
+
+    for (const blockNumber of missingBlocks) {
+      let success = false;
+      let lastError: any = null;
+
+      // Retry up to 3 times
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await this.processBlockByNumberAH(blockNumber);
+          success = true;
+          break;
+        } catch (error) {
+          lastError = error;
+          this.logger.warn({ error, blockNumber, attempt }, `Error processing AH block (attempt ${attempt}/3)`);
+
+          // Wait before retry (exponential backoff: 1s, 2s, 4s)
+          if (attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)));
+          }
+        }
+      }
+
+      if (success) {
+        processedCount++;
+
+        // Update sync progress in state after each block
+        this.db.setMultipleStates({
+          'syncedBlocksAH': processedCount.toString(),
+          'lastProcessedBlockAH': blockNumber.toString(),
+        });
+
+        if (processedCount % 10 === 0 || processedCount === totalBlocks) {
+          const progress = ((processedCount / totalBlocks) * 100).toFixed(1);
+          this.logger.info({
+            processed: processedCount,
+            total: totalBlocks,
+            progress: `${progress}%`,
+            chain: 'AH'
+          }, 'Asset Hub sync progress');
+        }
+      } else {
+        failedBlocks.push({
+          blockNumber,
+          error: lastError instanceof Error ? lastError.message : String(lastError),
+        });
+        this.logger.error({ blockNumber, error: lastError }, 'Failed to process AH block after 3 attempts');
+      }
+    }
+
+    if (failedBlocks.length > 0) {
+      this.logger.error({
+        totalBlocks,
+        processedCount,
+        failedCount: failedBlocks.length,
+        failedBlocks: failedBlocks.slice(0, 10), // Show first 10
+      }, 'Asset Hub sync completed with errors');
+    } else {
+      this.logger.info({ totalBlocks, processedCount }, 'Asset Hub sync completed successfully');
+    }
   }
 
   /**
@@ -162,10 +288,35 @@ export class Indexer {
     this.unsubscribeRC = this.apiRC.rpc.chain.subscribeFinalizedHeads(async (header: Header) => {
       const blockNumber = header.number.toNumber();
 
-      try {
-        await this.processBlockByNumberRC(blockNumber);
-      } catch (error) {
-        this.logger.error({ error, blockNumber, chain: 'RC' }, 'Error processing new RC block');
+      // Skip if already exists
+      if (this.db.blockExistsRC(blockNumber)) {
+        this.logger.debug({ blockNumber, chain: 'RC' }, 'Block already exists, skipping');
+        this.db.setState('currentHeightRC', blockNumber.toString());
+        return;
+      }
+
+      let success = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await this.processBlockByNumberRC(blockNumber);
+          success = true;
+
+          // Update current height when new blocks arrive
+          this.db.setState('currentHeightRC', blockNumber.toString());
+
+          this.logger.debug({ blockNumber, chain: 'RC' }, 'New RC block processed');
+          break;
+        } catch (error) {
+          this.logger.warn({ error, blockNumber, attempt, chain: 'RC' }, `Error processing new RC block (attempt ${attempt}/3)`);
+
+          if (attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          }
+        }
+      }
+
+      if (!success) {
+        this.logger.error({ blockNumber, chain: 'RC' }, 'Failed to process new RC block after 3 attempts');
       }
     }) as unknown as () => void;
   }
@@ -179,10 +330,35 @@ export class Indexer {
     this.unsubscribeAH = this.apiAH.rpc.chain.subscribeFinalizedHeads(async (header: Header) => {
       const blockNumber = header.number.toNumber();
 
-      try {
-        await this.processBlockByNumberAH(blockNumber);
-      } catch (error) {
-        this.logger.error({ error, blockNumber, chain: 'AH' }, 'Error processing new AH block');
+      // Skip if already exists
+      if (this.db.blockExistsAH(blockNumber)) {
+        this.logger.debug({ blockNumber, chain: 'AH' }, 'Block already exists, skipping');
+        this.db.setState('currentHeightAH', blockNumber.toString());
+        return;
+      }
+
+      let success = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await this.processBlockByNumberAH(blockNumber);
+          success = true;
+
+          // Update current height when new blocks arrive
+          this.db.setState('currentHeightAH', blockNumber.toString());
+
+          this.logger.debug({ blockNumber, chain: 'AH' }, 'New AH block processed');
+          break;
+        } catch (error) {
+          this.logger.warn({ error, blockNumber, attempt, chain: 'AH' }, `Error processing new AH block (attempt ${attempt}/3)`);
+
+          if (attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          }
+        }
+      }
+
+      if (!success) {
+        this.logger.error({ blockNumber, chain: 'AH' }, 'Failed to process new AH block after 3 attempts');
       }
     }) as unknown as () => void;
   }
@@ -191,12 +367,6 @@ export class Indexer {
    * Process a Relay Chain block by its number
    */
   private async processBlockByNumberRC(blockNumber: number): Promise<void> {
-    // Check if already processed
-    const lastProcessed = this.db.getState('lastProcessedBlockRC');
-    if (lastProcessed && parseInt(lastProcessed, 10) >= blockNumber) {
-      return;
-    }
-
     const blockHash = await this.apiRC.rpc.chain.getBlockHash(blockNumber);
     const header = await this.apiRC.rpc.chain.getHeader(blockHash);
     const apiAt = await this.apiRC.at(blockHash);
@@ -228,9 +398,6 @@ export class Indexer {
       });
     }
 
-    // Update last processed block
-    this.db.setState('lastProcessedBlockRC', blockNumber.toString());
-
     this.logger.debug({ blockNumber, events: events.length }, 'Processed RC block');
   }
 
@@ -238,12 +405,6 @@ export class Indexer {
    * Process an Asset Hub block by its number
    */
   private async processBlockByNumberAH(blockNumber: number): Promise<void> {
-    // Check if already processed
-    const lastProcessed = this.db.getState('lastProcessedBlockAH');
-    if (lastProcessed && parseInt(lastProcessed, 10) >= blockNumber) {
-      return;
-    }
-
     const blockHash = await this.apiAH.rpc.chain.getBlockHash(blockNumber);
     const header = await this.apiAH.rpc.chain.getHeader(blockHash);
     const apiAt = await this.apiAH.at(blockHash);
@@ -277,9 +438,6 @@ export class Indexer {
       // Process special events
       await this.processSpecialEvent(event, eventType, blockNumber, blockTimestamp);
     }
-
-    // Update last processed block
-    this.db.setState('lastProcessedBlockAH', blockNumber.toString());
 
     this.logger.debug({ blockNumber, events: events.length }, 'Processed AH block');
   }

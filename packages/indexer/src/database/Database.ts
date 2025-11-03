@@ -153,6 +153,16 @@ export class StakingDatabase {
     stmt.run(block.blockNumber, block.timestamp);
   }
 
+  blockExistsRC(blockNumber: number): boolean {
+    const stmt = this.db.prepare('SELECT 1 FROM blocks_rc WHERE block_number = ?');
+    return stmt.get(blockNumber) !== undefined;
+  }
+
+  blockExistsAH(blockNumber: number): boolean {
+    const stmt = this.db.prepare('SELECT 1 FROM blocks_ah WHERE block_number = ?');
+    return stmt.get(blockNumber) !== undefined;
+  }
+
   getBlockRC(blockNumber: number): Block | null {
     const stmt = this.db.prepare('SELECT * FROM blocks_rc WHERE block_number = ?');
     const row = stmt.get(blockNumber) as any;
@@ -473,6 +483,32 @@ export class StakingDatabase {
     const stmt = this.db.prepare('SELECT value FROM indexer_state WHERE key = ?');
     const result = stmt.get(key) as { value: string } | undefined;
     return result?.value || null;
+  }
+
+  getStateWithTimestamp(key: string): { value: string; updatedAt: number } | null {
+    const stmt = this.db.prepare('SELECT value, updated_at FROM indexer_state WHERE key = ?');
+    const result = stmt.get(key) as { value: string; updated_at: number } | undefined;
+    return result ? { value: result.value, updatedAt: result.updated_at } : null;
+  }
+
+  // Set multiple state values in a transaction
+  setMultipleStates(states: Record<string, string>): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO indexer_state (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `);
+
+    const transaction = this.db.transaction((entries: [string, string][]) => {
+      const now = Date.now();
+      for (const [key, value] of entries) {
+        stmt.run(key, value, now);
+      }
+    });
+
+    transaction(Object.entries(states));
   }
 
   // ===== MAINTENANCE METHODS =====

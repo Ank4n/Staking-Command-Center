@@ -7,36 +7,126 @@ import type {
   BlockchainEvent,
   ApiStatus,
   EraDetails,
+  ChainSyncInfo,
+  SyncStatus,
 } from '@staking-cc/shared';
 
 export class DatabaseClient {
   private db: Database.Database;
+  private dbPath: string;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath, { readonly: true, fileMustExist: true });
-    this.db.pragma('query_only = ON');
+    this.dbPath = dbPath;
+
+    // Open in read-write mode to properly read from WAL
+    // We never write anyway, but this allows us to see latest data
+    this.db = new Database(dbPath, { fileMustExist: true });
+
+    // Ensure WAL mode is enabled (should already be set by indexer)
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('synchronous = NORMAL');
+  }
+
+  /**
+   * Refresh connection to see latest WAL data
+   * SQLite connections in WAL mode see a snapshot from when they were opened
+   */
+  private refreshConnection(): void {
+    // Close existing connection
+    this.db.close();
+
+    // Reopen to see latest data
+    this.db = new Database(this.dbPath, { fileMustExist: true });
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('synchronous = NORMAL');
   }
 
   // ===== STATUS =====
 
   getStatus(): ApiStatus {
-    const lastBlockRC = this.db.prepare('SELECT value FROM indexer_state WHERE key = ?').get('lastProcessedBlockRC') as { value: string } | undefined;
-    const lastBlockAH = this.db.prepare('SELECT value FROM indexer_state WHERE key = ?').get('lastProcessedBlockAH') as { value: string } | undefined;
+    // Refresh connection to see latest WAL data
+    this.refreshConnection();
 
     const latestEra = this.db.prepare('SELECT * FROM eras ORDER BY era_id DESC LIMIT 1').get() as any | undefined;
     const latestSession = this.db.prepare('SELECT * FROM sessions ORDER BY session_id DESC LIMIT 1').get() as any | undefined;
+
+    // Get sync info for Relay Chain
+    const relayChain = this.getChainSyncInfo('RC');
+
+    // Get sync info for Asset Hub
+    const assetHub = this.getChainSyncInfo('AH');
 
     return {
       chain: process.env.CHAIN as any,
       currentEra: latestEra?.era_id || null,
       currentSession: latestSession?.session_id || null,
-      lastBlockRC: lastBlockRC ? parseInt(lastBlockRC.value, 10) : 0,
-      lastBlockAH: lastBlockAH ? parseInt(lastBlockAH.value, 10) : 0,
       lastUpdateTime: Date.now(),
       rpcEndpointRC: 'N/A',
       rpcEndpointAH: 'N/A',
-      isConnectedRC: true,
-      isConnectedAH: true,
+      relayChain,
+      assetHub,
+    };
+  }
+
+  private getChainSyncInfo(chain: 'RC' | 'AH'): ChainSyncInfo {
+    const suffix = chain;
+
+    // Get state values
+    const isSyncing = this.db.prepare('SELECT value FROM indexer_state WHERE key = ?')
+      .get(`isSyncing${suffix}`) as { value: string } | undefined;
+    const currentHeight = this.db.prepare('SELECT value FROM indexer_state WHERE key = ?')
+      .get(`currentHeight${suffix}`) as { value: string } | undefined;
+    const totalMissingBlocks = this.db.prepare('SELECT value FROM indexer_state WHERE key = ?')
+      .get(`totalMissingBlocks${suffix}`) as { value: string } | undefined;
+    const syncedBlocks = this.db.prepare('SELECT value FROM indexer_state WHERE key = ?')
+      .get(`syncedBlocks${suffix}`) as { value: string } | undefined;
+
+    // Get latest synced block
+    const latestBlock = this.db.prepare(`SELECT * FROM blocks_${chain.toLowerCase()} ORDER BY block_number DESC LIMIT 1`)
+      .get() as any | undefined;
+
+    const lastBlockNumber = latestBlock?.block_number || 0;
+    const lastBlockTime = latestBlock?.timestamp || 0;
+    const heightValue = currentHeight ? parseInt(currentHeight.value, 10) : lastBlockNumber;
+    const isSyncingValue = isSyncing?.value === 'true';
+
+    // Determine sync status
+    let status: SyncStatus;
+    if (isSyncingValue) {
+      status = 'syncing';
+    } else if (lastBlockTime > 0) {
+      const timeSinceLastBlock = Date.now() - lastBlockTime;
+      // If last block was less than 1 minute ago, consider in-sync
+      status = timeSinceLastBlock < 60000 ? 'in-sync' : 'out-of-sync';
+    } else {
+      status = 'out-of-sync';
+    }
+
+    // Calculate sync progress if syncing
+    let syncProgress = undefined;
+    if (isSyncingValue && totalMissingBlocks && syncedBlocks) {
+      const total = parseInt(totalMissingBlocks.value, 10);
+      const synced = parseInt(syncedBlocks.value, 10);
+
+      if (total > 0) {
+        const percentage = Math.min(100, Math.max(0, (synced / total) * 100));
+        const blocksRemaining = Math.max(0, total - synced);
+
+        syncProgress = {
+          target: heightValue - total,
+          current: heightValue,
+          percentage,
+          blocksRemaining,
+        };
+      }
+    }
+
+    return {
+      status,
+      lastBlockNumber,
+      lastBlockTime,
+      currentHeight: heightValue,
+      syncProgress,
     };
   }
 
