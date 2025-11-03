@@ -2,25 +2,27 @@ import type { ApiPromise } from '@polkadot/api';
 import type { Header, EventRecord } from '@polkadot/types/interfaces';
 import type { Logger } from 'pino';
 import type { StakingDatabase } from '../database';
-import { EventProcessor } from '../processors/EventProcessor';
 
 export class Indexer {
-  private api: ApiPromise;
+  private apiRC: ApiPromise;
+  private apiAH: ApiPromise;
   private db: StakingDatabase;
   private logger: Logger;
-  private eventProcessor: EventProcessor;
+  private backfillBlocks: number;
   private isRunning: boolean = false;
-  private unsubscribe: (() => void) | null = null;
+  private unsubscribeRC: (() => void) | null = null;
+  private unsubscribeAH: (() => void) | null = null;
 
-  constructor(api: ApiPromise, db: StakingDatabase, logger: Logger) {
-    this.api = api;
+  constructor(apiRC: ApiPromise, apiAH: ApiPromise, db: StakingDatabase, logger: Logger, backfillBlocks: number) {
+    this.apiRC = apiRC;
+    this.apiAH = apiAH;
     this.db = db;
     this.logger = logger.child({ component: 'Indexer' });
-    this.eventProcessor = new EventProcessor(api, db, logger);
+    this.backfillBlocks = backfillBlocks;
   }
 
   /**
-   * Start indexing blocks
+   * Start indexing both chains
    */
   async start(): Promise<void> {
     if (this.isRunning) {
@@ -31,43 +33,50 @@ export class Indexer {
     this.logger.info('Starting indexer...');
 
     try {
-      // Sync initial state
-      await this.eventProcessor.syncState();
+      // Get current finalized blocks for both chains
+      const finalizedHeadRC = await this.apiRC.rpc.chain.getFinalizedHead();
+      const finalizedHeaderRC = await this.apiRC.rpc.chain.getHeader(finalizedHeadRC);
+      const currentBlockRC = finalizedHeaderRC.number.toNumber();
 
-      // Get current finalized block
-      const finalizedHead = await this.api.rpc.chain.getFinalizedHead();
-      const finalizedHeader = await this.api.rpc.chain.getHeader(finalizedHead);
-      const currentBlock = finalizedHeader.number.toNumber();
+      const finalizedHeadAH = await this.apiAH.rpc.chain.getFinalizedHead();
+      const finalizedHeaderAH = await this.apiAH.rpc.chain.getHeader(finalizedHeadAH);
+      const currentBlockAH = finalizedHeaderAH.number.toNumber();
 
-      this.logger.info({ currentBlock }, 'Current finalized block');
+      this.logger.info({ currentBlockRC, currentBlockAH }, 'Current finalized blocks');
 
-      // Determine starting block for backfill
-      const lastBlockStr = this.db.getState('lastProcessedBlock');
-      let startBlock: number;
+      // Determine starting blocks for backfill
+      const lastBlockRCStr = this.db.getState('lastProcessedBlockRC');
+      const lastBlockAHStr = this.db.getState('lastProcessedBlockAH');
 
-      if (lastBlockStr) {
-        // Resume from last processed block
-        const lastProcessedBlock = parseInt(lastBlockStr, 10);
-        startBlock = lastProcessedBlock + 1;
-        this.logger.info({ lastProcessedBlock, startBlock }, 'Resuming from last processed block');
+      let startBlockRC: number;
+      let startBlockAH: number;
+
+      if (lastBlockRCStr) {
+        startBlockRC = parseInt(lastBlockRCStr, 10) + 1;
+        this.logger.info({ lastBlock: parseInt(lastBlockRCStr, 10), startBlockRC }, 'Resuming Relay Chain from last processed block');
       } else {
-        // Initial start: go back 250 blocks (most public RPC nodes keep ~256 blocks of state)
-        const INITIAL_BACKFILL_BLOCKS = 250;
-        startBlock = Math.max(1, currentBlock - INITIAL_BACKFILL_BLOCKS);
-        this.logger.info({ startBlock, blocksBack: INITIAL_BACKFILL_BLOCKS }, 'Initial start: backfilling from past blocks');
+        startBlockRC = Math.max(1, currentBlockRC - this.backfillBlocks);
+        this.logger.info({ startBlockRC, blocksBack: this.backfillBlocks }, 'Initial start: backfilling Relay Chain');
       }
 
-      // Process all blocks from start to current
-      if (startBlock < currentBlock) {
-        await this.catchUp(startBlock, currentBlock);
-      } else if (startBlock === currentBlock) {
-        this.logger.info('Already caught up, processing current block');
-        await this.processBlockByNumber(currentBlock);
+      if (lastBlockAHStr) {
+        startBlockAH = parseInt(lastBlockAHStr, 10) + 1;
+        this.logger.info({ lastBlock: parseInt(lastBlockAHStr, 10), startBlockAH }, 'Resuming Asset Hub from last processed block');
+      } else {
+        startBlockAH = Math.max(1, currentBlockAH - this.backfillBlocks);
+        this.logger.info({ startBlockAH, blocksBack: this.backfillBlocks }, 'Initial start: backfilling Asset Hub');
       }
 
-      // Subscribe to new finalized blocks
+      // Process backfill for both chains in parallel
+      await Promise.all([
+        this.catchUpRC(startBlockRC, currentBlockRC),
+        this.catchUpAH(startBlockAH, currentBlockAH),
+      ]);
+
+      // Subscribe to new finalized blocks for both chains
       this.isRunning = true;
-      this.subscribeToNewBlocks();
+      this.subscribeToNewBlocksRC();
+      this.subscribeToNewBlocksAH();
 
       this.logger.info('Indexer started successfully');
     } catch (error) {
@@ -77,101 +86,298 @@ export class Indexer {
   }
 
   /**
-   * Catch up with missed blocks
+   * Catch up with missed blocks on Relay Chain
    */
-  private async catchUp(fromBlock: number, toBlock: number): Promise<void> {
-    const totalBlocks = toBlock - fromBlock + 1;
-    this.logger.info({ fromBlock, toBlock, totalBlocks }, 'Catching up with missed blocks');
+  private async catchUpRC(fromBlock: number, toBlock: number): Promise<void> {
+    if (fromBlock > toBlock) {
+      this.logger.info('Relay Chain already caught up');
+      return;
+    }
 
-    // Process blocks in batches to avoid overwhelming the system
-    const BATCH_SIZE = 100;
-    let processed = 0;
+    const totalBlocks = toBlock - fromBlock + 1;
+    this.logger.info({ fromBlock, toBlock, totalBlocks }, 'Catching up Relay Chain');
 
     for (let i = fromBlock; i <= toBlock; i++) {
       try {
-        await this.processBlockByNumber(i);
-        processed++;
+        await this.processBlockByNumberRC(i);
 
-        if (processed % BATCH_SIZE === 0) {
-          this.logger.info({ processed, total: totalBlocks, progress: `${((processed / totalBlocks) * 100).toFixed(1)}%` }, 'Catch-up progress');
+        if ((i - fromBlock + 1) % 10 === 0 || i === toBlock) {
+          const processed = i - fromBlock + 1;
+          this.logger.info({
+            processed,
+            total: totalBlocks,
+            progress: `${((processed / totalBlocks) * 100).toFixed(1)}%`,
+            chain: 'RC'
+          }, 'Relay Chain catch-up progress');
         }
       } catch (error) {
-        this.logger.error({ error, blockNumber: i }, 'Error processing block during catch-up');
+        this.logger.error({ error, blockNumber: i }, 'Error processing RC block during catch-up');
         // Continue with next block
       }
     }
 
-    this.logger.info({ processed, total: totalBlocks }, 'Catch-up completed');
+    this.logger.info({ totalBlocks }, 'Relay Chain catch-up completed');
   }
 
   /**
-   * Subscribe to new finalized blocks
+   * Catch up with missed blocks on Asset Hub
    */
-  private subscribeToNewBlocks(): void {
-    this.logger.info('Subscribing to new finalized blocks');
+  private async catchUpAH(fromBlock: number, toBlock: number): Promise<void> {
+    if (fromBlock > toBlock) {
+      this.logger.info('Asset Hub already caught up');
+      return;
+    }
 
-    this.unsubscribe = this.api.rpc.chain.subscribeFinalizedHeads(async (header: Header) => {
+    const totalBlocks = toBlock - fromBlock + 1;
+    this.logger.info({ fromBlock, toBlock, totalBlocks }, 'Catching up Asset Hub');
+
+    for (let i = fromBlock; i <= toBlock; i++) {
+      try {
+        await this.processBlockByNumberAH(i);
+
+        if ((i - fromBlock + 1) % 10 === 0 || i === toBlock) {
+          const processed = i - fromBlock + 1;
+          this.logger.info({
+            processed,
+            total: totalBlocks,
+            progress: `${((processed / totalBlocks) * 100).toFixed(1)}%`,
+            chain: 'AH'
+          }, 'Asset Hub catch-up progress');
+        }
+      } catch (error) {
+        this.logger.error({ error, blockNumber: i }, 'Error processing AH block during catch-up');
+        // Continue with next block
+      }
+    }
+
+    this.logger.info({ totalBlocks }, 'Asset Hub catch-up completed');
+  }
+
+  /**
+   * Subscribe to new finalized blocks on Relay Chain
+   */
+  private subscribeToNewBlocksRC(): void {
+    this.logger.info('Subscribing to Relay Chain new finalized blocks');
+
+    this.unsubscribeRC = this.apiRC.rpc.chain.subscribeFinalizedHeads(async (header: Header) => {
       const blockNumber = header.number.toNumber();
-      const blockHash = header.hash.toHex();
 
       try {
-        await this.processBlock(blockNumber, blockHash, header);
+        await this.processBlockByNumberRC(blockNumber);
       } catch (error) {
-        this.logger.error({ error, blockNumber, blockHash }, 'Error processing new block');
+        this.logger.error({ error, blockNumber, chain: 'RC' }, 'Error processing new RC block');
       }
     }) as unknown as () => void;
   }
 
   /**
-   * Process a block by its number
+   * Subscribe to new finalized blocks on Asset Hub
    */
-  private async processBlockByNumber(blockNumber: number): Promise<void> {
-    const blockHash = await this.api.rpc.chain.getBlockHash(blockNumber);
-    const header = await this.api.rpc.chain.getHeader(blockHash);
+  private subscribeToNewBlocksAH(): void {
+    this.logger.info('Subscribing to Asset Hub new finalized blocks');
 
-    await this.processBlock(blockNumber, blockHash.toHex(), header);
+    this.unsubscribeAH = this.apiAH.rpc.chain.subscribeFinalizedHeads(async (header: Header) => {
+      const blockNumber = header.number.toNumber();
+
+      try {
+        await this.processBlockByNumberAH(blockNumber);
+      } catch (error) {
+        this.logger.error({ error, blockNumber, chain: 'AH' }, 'Error processing new AH block');
+      }
+    }) as unknown as () => void;
   }
 
   /**
-   * Process a single block
+   * Process a Relay Chain block by its number
    */
-  private async processBlock(blockNumber: number, blockHash: string, header: Header): Promise<void> {
+  private async processBlockByNumberRC(blockNumber: number): Promise<void> {
     // Check if already processed
-    const lastProcessed = this.db.getState('lastProcessedBlock');
+    const lastProcessed = this.db.getState('lastProcessedBlockRC');
     if (lastProcessed && parseInt(lastProcessed, 10) >= blockNumber) {
       return;
     }
 
-    this.logger.debug({ blockNumber, blockHash }, 'Processing block');
+    const blockHash = await this.apiRC.rpc.chain.getBlockHash(blockNumber);
+    const header = await this.apiRC.rpc.chain.getHeader(blockHash);
+    const apiAt = await this.apiRC.at(blockHash);
 
-    try {
-      // Get block events
-      const apiAt = await this.api.at(blockHash);
-      const events = await apiAt.query.system.events();
+    // Get block timestamp
+    const timestamp = await apiAt.query.timestamp.now();
+    const blockTimestamp = (timestamp as any).toNumber();
 
-      // Get block timestamp
-      const timestamp = await apiAt.query.timestamp.now();
-      const blockTimestamp = (timestamp as any).toNumber();
+    // Store block
+    this.db.insertBlockRC({ blockNumber, timestamp: blockTimestamp });
 
-      // Process events
-      await this.eventProcessor.processBlockEvents(
+    // Get and store events
+    const eventsCodec = await apiAt.query.system.events();
+    const events = eventsCodec as unknown as EventRecord[];
+
+    for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
+      const record = events[eventIndex];
+      const { event } = record;
+
+      // Create event_id in format: blockNumber-eventIndex (for Subscan linking)
+      const eventId = `${blockNumber}-${eventIndex}`;
+      const eventType = `${event.section}.${event.method}`;
+
+      this.db.insertEventRC({
         blockNumber,
-        blockHash,
-        events as unknown as EventRecord[],
-        blockTimestamp
-      );
+        eventId,
+        eventType,
+        data: JSON.stringify(event.toHuman()),
+      });
+    }
 
-      // Update last processed block
-      this.db.setState('lastProcessedBlock', blockNumber.toString());
+    // Update last processed block
+    this.db.setState('lastProcessedBlockRC', blockNumber.toString());
 
-      // Log progress periodically
-      if (blockNumber % 100 === 0) {
-        const stats = this.db.getStats();
-        this.logger.info({ blockNumber, ...stats }, 'Block processing progress');
+    this.logger.debug({ blockNumber, events: events.length }, 'Processed RC block');
+  }
+
+  /**
+   * Process an Asset Hub block by its number
+   */
+  private async processBlockByNumberAH(blockNumber: number): Promise<void> {
+    // Check if already processed
+    const lastProcessed = this.db.getState('lastProcessedBlockAH');
+    if (lastProcessed && parseInt(lastProcessed, 10) >= blockNumber) {
+      return;
+    }
+
+    const blockHash = await this.apiAH.rpc.chain.getBlockHash(blockNumber);
+    const header = await this.apiAH.rpc.chain.getHeader(blockHash);
+    const apiAt = await this.apiAH.at(blockHash);
+
+    // Get block timestamp
+    const timestamp = await apiAt.query.timestamp.now();
+    const blockTimestamp = (timestamp as any).toNumber();
+
+    // Store block
+    this.db.insertBlockAH({ blockNumber, timestamp: blockTimestamp });
+
+    // Get and store events
+    const eventsCodec = await apiAt.query.system.events();
+    const events = eventsCodec as unknown as EventRecord[];
+
+    for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
+      const record = events[eventIndex];
+      const { event } = record;
+
+      // Create event_id in format: blockNumber-eventIndex (for Subscan linking)
+      const eventId = `${blockNumber}-${eventIndex}`;
+      const eventType = `${event.section}.${event.method}`;
+
+      this.db.insertEventAH({
+        blockNumber,
+        eventId,
+        eventType,
+        data: JSON.stringify(event.toHuman()),
+      });
+
+      // Process special events
+      await this.processSpecialEvent(event, eventType, blockNumber, blockTimestamp);
+    }
+
+    // Update last processed block
+    this.db.setState('lastProcessedBlockAH', blockNumber.toString());
+
+    this.logger.debug({ blockNumber, events: events.length }, 'Processed AH block');
+  }
+
+  /**
+   * Process special events that create sessions and eras
+   */
+  private async processSpecialEvent(event: any, eventType: string, blockNumber: number, blockTimestamp: number): Promise<void> {
+    // Look for stakingRelaychainClient.SessionReportReceived event
+    if (eventType === 'stakingRelaychainClient.SessionReportReceived') {
+      await this.handleSessionReportReceived(event, blockNumber, blockTimestamp);
+    }
+  }
+
+  /**
+   * Handle SessionReportReceived event to create sessions and eras
+   */
+  private async handleSessionReportReceived(event: any, blockNumber: number, blockTimestamp: number): Promise<void> {
+    try {
+      // Parse event data
+      const eventData = event.toJSON();
+
+      // Extract fields from event
+      // Based on https://assethub-kusama.subscan.io/event/11499278-10
+      // Event structure: { endIndex, validatorSet: [...], totalPoints }
+      const endIndex = event.data.endIndex ? event.data.endIndex.toNumber() : null;
+      const totalPoints = event.data.totalPoints ? event.data.totalPoints.toNumber() : 0;
+
+      if (endIndex === null) {
+        this.logger.warn({ blockNumber, eventData }, 'SessionReportReceived missing endIndex');
+        return;
       }
+
+      const sessionId = endIndex;
+
+      // Check if event has activation_timestamp (marks new era)
+      // If activation_timestamp is present, this is an era boundary
+      let activationTimestamp: number | null = null;
+      let isEraStart = false;
+
+      // Try to extract activation_timestamp from event data
+      if (event.data.activationTimestamp) {
+        activationTimestamp = event.data.activationTimestamp.toNumber();
+        isEraStart = true;
+      }
+
+      this.logger.info({
+        sessionId,
+        blockNumber,
+        totalPoints,
+        activationTimestamp,
+        isEraStart
+      }, 'SessionReportReceived event');
+
+      // If this is an era start, create/update era
+      let eraId: number | null = null;
+      if (isEraStart && activationTimestamp !== null) {
+        // Query current era from Asset Hub
+        const apiAt = await this.apiAH.at(await this.apiAH.rpc.chain.getBlockHash(blockNumber));
+        const currentEraOption = await apiAt.query.staking?.currentEra?.();
+
+        if (currentEraOption && !currentEraOption.isEmpty) {
+          eraId = (currentEraOption as any).toNumber();
+
+          // Update previous era's end session
+          const previousEra = this.db.getLatestEra();
+          if (previousEra && previousEra.sessionEnd === null) {
+            this.db.upsertEra({
+              ...previousEra,
+              sessionEnd: sessionId - 1,
+            });
+          }
+
+          // Create new era (sessionId and eraId are guaranteed to be numbers here)
+          this.db.upsertEra({
+            eraId: eraId!,
+            sessionStart: (sessionId as number) + 1,
+            sessionEnd: null,
+            startTime: activationTimestamp,
+          });
+
+          this.logger.info({ eraId, sessionStart: sessionId + 1, startTime: activationTimestamp }, 'New era created');
+        }
+      }
+
+      // Create/update session
+      this.db.upsertSession({
+        sessionId,
+        blockNumber,
+        activationTimestamp,
+        eraId,
+        validatorPointsTotal: totalPoints,
+      });
+
+      this.logger.info({ sessionId, eraId, totalPoints }, 'Session created/updated');
+
     } catch (error) {
-      this.logger.error({ error, blockNumber, blockHash }, 'Error processing block');
-      throw error;
+      this.logger.error({ error, blockNumber, eventType: 'SessionReportReceived' }, 'Error handling SessionReportReceived');
     }
   }
 
@@ -185,9 +391,14 @@ export class Indexer {
 
     this.logger.info('Stopping indexer...');
 
-    if (this.unsubscribe) {
-      this.unsubscribe();
-      this.unsubscribe = null;
+    if (this.unsubscribeRC) {
+      this.unsubscribeRC();
+      this.unsubscribeRC = null;
+    }
+
+    if (this.unsubscribeAH) {
+      this.unsubscribeAH();
+      this.unsubscribeAH = null;
     }
 
     this.isRunning = false;

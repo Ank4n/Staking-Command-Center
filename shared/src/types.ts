@@ -1,71 +1,51 @@
 // Chain types
-export type ChainType = 'polkadot' | 'kusama';
+export type ChainType = 'polkadot' | 'kusama' | 'westend';
 export type ChainLayer = 'relayChain' | 'assetHub';
 
-// Era and Session types
-export interface Era {
-  eraIndex: number;
-  startSession: number | null;
-  endSession: number | null;
-  startTime: number | null;
-  endTime: number | null;
-  totalValidators: number | null;
-  totalNominators: number | null;
-  inflationAmount: string | null;
+// Block types
+export interface Block {
+  blockNumber: number;
+  timestamp: number;
 }
 
+// Event types - now includes event_id for Subscan linking
+export interface BlockchainEvent {
+  id?: number;
+  blockNumber: number;
+  eventId: string; // Format: blockNumber-eventIndex for Subscan linking
+  eventType: string; // section.method (e.g., "stakingRelaychainClient.SessionReportReceived")
+  data: string; // JSON stringified event data
+}
+
+// Session types (Asset Hub only)
 export interface Session {
-  sessionIndex: number;
-  eraIndex: number | null;
-  startBlock: number;
-  startTime: number;
-  validatorCount: number | null;
-  pointsTotal: number | null;
+  sessionId: number;
+  blockNumber: number; // FK to Blocks_AH
+  activationTimestamp: number | null; // From event data
+  eraId: number | null; // FK to Eras
+  validatorPointsTotal: number;
 }
 
-// Election types
-export type ElectionPhase = 'off' | 'signed' | 'unsigned' | 'emergency' | 'snapshot';
-
-export interface ElectionPhaseRecord {
-  id?: number;
-  eraIndex: number;
-  phase: ElectionPhase;
-  startBlock: number;
-  endBlock: number | null;
-  startTime: number;
-  endTime: number | null;
+// Era types
+export interface Era {
+  eraId: number;
+  sessionStart: number; // end_index + 1 from SessionReportReceived
+  sessionEnd: number | null; // Set when next era is created
+  startTime: number; // activation_timestamp from event
 }
 
-export interface ValidatorPoints {
-  id?: number;
-  sessionIndex: number;
-  validatorAddress: string;
-  points: number;
-}
-
-// Warning types
+// Warning types (for later)
 export type WarningType = 'timing' | 'missing_event' | 'unexpected_event' | 'election_issue';
 export type WarningSeverity = 'info' | 'warning' | 'error';
 
 export interface Warning {
   id?: number;
-  eraIndex: number | null;
-  sessionIndex: number | null;
+  eraId: number | null;
+  sessionId: number | null;
   blockNumber: number;
   type: WarningType;
   message: string;
   severity: WarningSeverity;
-  timestamp: number;
-}
-
-// Event types
-export interface BlockchainEvent {
-  id?: number;
-  blockNumber: number;
-  eraIndex: number | null;
-  sessionIndex: number | null;
-  eventType: string;
-  data: string; // JSON stringified
   timestamp: number;
 }
 
@@ -85,28 +65,28 @@ export interface ApiStatus {
   chain: ChainType;
   currentEra: number | null;
   currentSession: number | null;
-  activeValidators: number | null;
-  electionPhase: ElectionPhase | null;
-  lastBlock: number;
+  lastBlockRC: number;
+  lastBlockAH: number;
   lastUpdateTime: number;
-  rpcEndpoint: string;
-  isConnected: boolean;
+  rpcEndpointRC: string;
+  rpcEndpointAH: string;
+  isConnectedRC: boolean;
+  isConnectedAH: boolean;
+  syncProgressRC?: {
+    target: number;
+    current: number;
+    percentage: number;
+  };
+  syncProgressAH?: {
+    target: number;
+    current: number;
+    percentage: number;
+  };
 }
 
 export interface EraDetails extends Era {
   sessions: Session[];
-  electionPhases: ElectionPhaseRecord[];
   warnings: Warning[];
-  unclaimedRewards?: number;
-}
-
-export interface ValidatorInfo {
-  address: string;
-  totalPoints: number;
-  sessions: {
-    sessionIndex: number;
-    points: number;
-  }[];
 }
 
 // WebSocket event types for real-time updates
@@ -130,12 +110,22 @@ export interface DatabaseConfig {
   maxEras: number;
 }
 
+// Indexer configuration
+export type IndexerMode = 'dev' | 'prod';
+
+export interface IndexerConfig {
+  mode: IndexerMode;
+  backfillBlocks: number; // 10 for dev, 15000 for prod
+}
+
 // Indexer state
 export interface IndexerState {
-  lastProcessedBlock: number;
+  lastProcessedBlockRC: number;
+  lastProcessedBlockAH: number;
   currentEra: number | null;
   currentSession: number | null;
-  isProcessing: boolean;
+  isProcessingRC: boolean;
+  isProcessingAH: boolean;
   errorCount: number;
   lastError: string | null;
 }

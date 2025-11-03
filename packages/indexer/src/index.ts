@@ -8,14 +8,11 @@ import * as path from 'path';
 
 async function main() {
   try {
-    console.log('DEBUG: Main function started');
     logger.info('Starting Staking Command Center Indexer');
 
     // Load configuration
-    console.log('DEBUG: About to load config');
     const config = loadConfig();
-    console.log('DEBUG: Config loaded:', config);
-    logger.info({ chain: config.chain }, 'Configuration loaded');
+    logger.info({ chain: config.chain, mode: config.mode, backfillBlocks: config.backfillBlocks }, 'Configuration loaded');
 
     // Ensure data directory exists
     const dataDir = path.dirname(config.dbPath);
@@ -28,25 +25,37 @@ async function main() {
     const db = new StakingDatabase(config.dbPath, logger, config.maxEras);
     logger.info({ dbPath: config.dbPath }, 'Database initialized');
 
-    // Initialize RPC connection with failover
-    const rpcManager = new RpcManager(
+    // Initialize RPC connections for both Relay Chain and Asset Hub
+    logger.info('Connecting to Relay Chain...');
+    const rpcManagerRC = new RpcManager(
       config.chain,
       'relayChain',
       logger,
       config.customRpcEndpoint
     );
+    const apiRC = await rpcManagerRC.connect();
+    logger.info({ endpoint: rpcManagerRC.getCurrentEndpoint() }, 'Connected to Relay Chain');
 
-    logger.info('Connecting to RPC endpoint...');
-    const api = await rpcManager.connect();
-    logger.info({ endpoint: rpcManager.getCurrentEndpoint() }, 'Connected to RPC');
+    logger.info('Connecting to Asset Hub...');
+    const rpcManagerAH = new RpcManager(
+      config.chain,
+      'assetHub',
+      logger
+    );
+    const apiAH = await rpcManagerAH.connect();
+    logger.info({ endpoint: rpcManagerAH.getCurrentEndpoint() }, 'Connected to Asset Hub');
 
-    // Get chain info
-    const chain = await api.rpc.system.chain();
-    const version = await api.rpc.system.version();
-    logger.info({ chain: chain.toString(), version: version.toString() }, 'Chain info');
+    // Get chain info for both chains
+    const chainRC = await apiRC.rpc.system.chain();
+    const versionRC = await apiRC.rpc.system.version();
+    logger.info({ chain: chainRC.toString(), version: versionRC.toString() }, 'Relay Chain info');
 
-    // Initialize and start indexer
-    const indexer = new Indexer(api, db, logger);
+    const chainAH = await apiAH.rpc.system.chain();
+    const versionAH = await apiAH.rpc.system.version();
+    logger.info({ chain: chainAH.toString(), version: versionAH.toString() }, 'Asset Hub info');
+
+    // Initialize and start indexer for both chains
+    const indexer = new Indexer(apiRC, apiAH, db, logger, config.backfillBlocks);
     await indexer.start();
 
     // Handle graceful shutdown
@@ -55,7 +64,8 @@ async function main() {
 
       try {
         await indexer.stop();
-        await rpcManager.disconnect();
+        await rpcManagerRC.disconnect();
+        await rpcManagerAH.disconnect();
         db.close();
 
         logger.info('Shutdown completed');

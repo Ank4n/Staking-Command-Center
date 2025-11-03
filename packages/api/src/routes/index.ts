@@ -29,6 +29,62 @@ export function createRouter(db: DatabaseClient): Router {
     }
   });
 
+  // ===== BLOCK ENDPOINTS =====
+
+  // Get recent blocks from Relay Chain
+  router.get('/blocks/rc', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const blocks = db.getBlocksRC(Math.min(limit, 1000));
+      res.json(blocks);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get RC blocks' });
+    }
+  });
+
+  // Get recent blocks from Asset Hub
+  router.get('/blocks/ah', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const blocks = db.getBlocksAH(Math.min(limit, 1000));
+      res.json(blocks);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get AH blocks' });
+    }
+  });
+
+  // Get specific block from Relay Chain
+  router.get('/blocks/rc/:blockNumber', (req, res) => {
+    try {
+      const blockNumber = parseInt(req.params.blockNumber);
+      const block = db.getBlockRC(blockNumber);
+
+      if (!block) {
+        return res.status(404).json({ error: 'Block not found' });
+      }
+
+      res.json(block);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get RC block' });
+    }
+  });
+
+  // Get specific block from Asset Hub
+  router.get('/blocks/ah/:blockNumber', (req, res) => {
+    try {
+      const blockNumber = parseInt(req.params.blockNumber);
+      const block = db.getBlockAH(blockNumber);
+
+      if (!block) {
+        return res.status(404).json({ error: 'Block not found' });
+      }
+
+      res.json(block);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get AH block' });
+    }
+  });
+
   // ===== ERA ENDPOINTS =====
 
   // Get list of eras
@@ -43,10 +99,10 @@ export function createRouter(db: DatabaseClient): Router {
   });
 
   // Get era details
-  router.get('/eras/:eraIndex', (req, res) => {
+  router.get('/eras/:eraId', (req, res) => {
     try {
-      const eraIndex = parseInt(req.params.eraIndex);
-      const era = db.getEra(eraIndex);
+      const eraId = parseInt(req.params.eraId);
+      const era = db.getEra(eraId);
 
       if (!era) {
         return res.status(404).json({ error: 'Era not found' });
@@ -60,11 +116,22 @@ export function createRouter(db: DatabaseClient): Router {
 
   // ===== SESSION ENDPOINTS =====
 
-  // Get session details
-  router.get('/sessions/:sessionIndex', (req, res) => {
+  // Get list of sessions
+  router.get('/sessions', (req, res) => {
     try {
-      const sessionIndex = parseInt(req.params.sessionIndex);
-      const session = db.getSession(sessionIndex);
+      const limit = parseInt(req.query.limit as string) || 100;
+      const sessions = db.getSessions(Math.min(limit, 200));
+      res.json(sessions);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get sessions' });
+    }
+  });
+
+  // Get session details
+  router.get('/sessions/:sessionId', (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.sessionId);
+      const session = db.getSession(sessionId);
 
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
@@ -77,61 +144,13 @@ export function createRouter(db: DatabaseClient): Router {
   });
 
   // Get sessions by era
-  router.get('/eras/:eraIndex/sessions', (req, res) => {
+  router.get('/eras/:eraId/sessions', (req, res) => {
     try {
-      const eraIndex = parseInt(req.params.eraIndex);
-      const sessions = db.getSessionsByEra(eraIndex);
+      const eraId = parseInt(req.params.eraId);
+      const sessions = db.getSessionsByEra(eraId);
       res.json(sessions);
     } catch (error) {
       res.status(500).json({ error: 'Failed to get sessions' });
-    }
-  });
-
-  // ===== ELECTION ENDPOINTS =====
-
-  // Get election phases for an era
-  router.get('/eras/:eraIndex/election', (req, res) => {
-    try {
-      const eraIndex = parseInt(req.params.eraIndex);
-      const phases = db.getElectionPhases(eraIndex);
-      res.json(phases);
-    } catch (error) {
-      res.status(500).json({ error: 'Failed to get election phases' });
-    }
-  });
-
-  // Get current election phase
-  router.get('/election/current', (req, res) => {
-    try {
-      const phase = db.getCurrentElectionPhase();
-      res.json(phase || { phase: 'off' });
-    } catch (error) {
-      res.status(500).json({ error: 'Failed to get current election phase' });
-    }
-  });
-
-  // ===== VALIDATOR POINTS ENDPOINTS =====
-
-  // Get validator points by session
-  router.get('/sessions/:sessionIndex/validator-points', (req, res) => {
-    try {
-      const sessionIndex = parseInt(req.params.sessionIndex);
-      const points = db.getValidatorPointsBySession(sessionIndex);
-      res.json(points);
-    } catch (error) {
-      res.status(500).json({ error: 'Failed to get validator points' });
-    }
-  });
-
-  // Get validator points by address
-  router.get('/validators/:address/points', (req, res) => {
-    try {
-      const address = req.params.address;
-      const limit = parseInt(req.query.limit as string) || 10;
-      const points = db.getValidatorPointsByAddress(address, Math.min(limit, 50));
-      res.json(points);
-    } catch (error) {
-      res.status(500).json({ error: 'Failed to get validator points' });
     }
   });
 
@@ -166,30 +185,92 @@ export function createRouter(db: DatabaseClient): Router {
 
   // ===== EVENT ENDPOINTS =====
 
-  // Get recent events
-  router.get('/events', (req, res) => {
+  // Get recent events from Relay Chain
+  router.get('/events/rc', (req, res) => {
     try {
-      const limit = parseInt(req.query.limit as string) || 100;
+      const limit = parseInt(req.query.limit as string) || 1000;
       const eventType = req.query.type as string;
 
       const events = eventType
-        ? db.getEventsByType(eventType, Math.min(limit, 500))
-        : db.getEvents(Math.min(limit, 500));
+        ? db.getEventsByTypeRC(eventType, Math.min(limit, 5000))
+        : db.getEventsRC(Math.min(limit, 5000));
 
       res.json(events);
     } catch (error) {
-      res.status(500).json({ error: 'Failed to get events' });
+      res.status(500).json({ error: 'Failed to get RC events' });
     }
   });
 
-  // Get events by block
-  router.get('/blocks/:blockNumber/events', (req, res) => {
+  // Get recent events from Asset Hub
+  router.get('/events/ah', (req, res) => {
     try {
-      const blockNumber = parseInt(req.params.blockNumber);
-      const events = db.getEventsByBlock(blockNumber);
+      const limit = parseInt(req.query.limit as string) || 1000;
+      const eventType = req.query.type as string;
+
+      const events = eventType
+        ? db.getEventsByTypeAH(eventType, Math.min(limit, 5000))
+        : db.getEventsAH(Math.min(limit, 5000));
+
       res.json(events);
     } catch (error) {
-      res.status(500).json({ error: 'Failed to get events' });
+      res.status(500).json({ error: 'Failed to get AH events' });
+    }
+  });
+
+  // Get events by block from Relay Chain
+  router.get('/blocks/rc/:blockNumber/events', (req, res) => {
+    try {
+      const blockNumber = parseInt(req.params.blockNumber);
+      const events = db.getEventsByBlockRC(blockNumber);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get RC events' });
+    }
+  });
+
+  // Get events by block from Asset Hub
+  router.get('/blocks/ah/:blockNumber/events', (req, res) => {
+    try {
+      const blockNumber = parseInt(req.params.blockNumber);
+      const events = db.getEventsByBlockAH(blockNumber);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get AH events' });
+    }
+  });
+
+  // ===== DATABASE VIEWER ENDPOINTS (for advanced tab) =====
+
+  // Get all table names
+  router.get('/database/tables', (req, res) => {
+    try {
+      const tables = db.getTables();
+      res.json(tables);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get tables' });
+    }
+  });
+
+  // Get table schema
+  router.get('/database/:tableName/schema', (req, res) => {
+    try {
+      const tableName = req.params.tableName;
+      const schema = db.getTableSchema(tableName);
+      res.json(schema);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get table schema' });
+    }
+  });
+
+  // Get table data
+  router.get('/database/:tableName/data', (req, res) => {
+    try {
+      const tableName = req.params.tableName;
+      const limit = parseInt(req.query.limit as string) || 100;
+      const data = db.getTableData(tableName, Math.min(limit, 1000));
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get table data' });
     }
   });
 

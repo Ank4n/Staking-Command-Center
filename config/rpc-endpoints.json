@@ -1,10 +1,10 @@
 {
   "polkadot": {
     "relayChain": [
-      "wss://polkadot-rpc.publicnode.com",
-      "wss://polkadot-public-rpc.blockops.network/ws",
       "wss://polkadot-rpc.n.dwellir.com",
       "wss://polkadot-rpc-tn.dwellir.com",
+      "wss://polkadot-rpc.publicnode.com",
+      "wss://polkadot-public-rpc.blockops.network/ws",
       "wss://rpc-polkadot.helixstreet.io",
       "wss://rpc.ibp.network/polkadot",
       "wss://polkadot.dotters.network",
@@ -25,10 +25,10 @@
   },
   "kusama": {
     "relayChain": [
-      "wss://kusama-rpc.publicnode.com",
-      "wss://kusama-public-rpc.blockops.network/ws",
       "wss://kusama-rpc.n.dwellir.com",
       "wss://kusama-rpc-tn.dwellir.com",
+      "wss://kusama-rpc.publicnode.com",
+      "wss://kusama-public-rpc.blockops.network/ws",
       "wss://rpc-kusama.helixstreet.io",
       "wss://rpc.ibp.network/kusama",
       "wss://kusama.dotters.network",
@@ -47,6 +47,19 @@
       "wss://kusama-asset-hub-rpc.polkadot.io",
       "wss://statemine.public.curie.radiumblock.co/ws",
       "wss://ksm-rpc.stakeworld.io/assethub"
+    ]
+  },
+  "westend": {
+    "relayChain": [
+      "wss://westend-rpc.n.dwellir.com",
+      "wss://westend-rpc.publicnode.com",
+      "wss://rpc.ibp.network/westend",
+      "wss://westend.api.onfinality.io/public-ws"
+    ],
+    "assetHub": [
+      "wss://asset-hub-westend-rpc.n.dwellir.com",
+      "wss://sys.ibp.network/asset-hub-westend",
+      "wss://westend-asset-hub-rpc.polkadot.io"
     ]
   }
 }
