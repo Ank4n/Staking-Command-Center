@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import type { Warning } from '@staking-cc/shared';
 
 interface WarningsPanelProps {
@@ -6,6 +7,28 @@ interface WarningsPanelProps {
 }
 
 export const WarningsPanel: React.FC<WarningsPanelProps> = ({ warnings, loading }) => {
+  const [newWarningIds, setNewWarningIds] = useState<Set<number>>(new Set());
+  const previousWarningsRef = useRef<Set<number>>(new Set());
+
+  // Detect new warnings and mark them for animation
+  useEffect(() => {
+    const currentWarningIds = new Set(warnings.map(w => w.id));
+    const newWarnings = new Set<number>();
+
+    currentWarningIds.forEach(warningId => {
+      if (!previousWarningsRef.current.has(warningId)) {
+        newWarnings.add(warningId);
+      }
+    });
+
+    if (newWarnings.size > 0) {
+      setNewWarningIds(newWarnings);
+      // Remove animation class after 3 seconds (animation duration)
+      setTimeout(() => setNewWarningIds(new Set()), 3000);
+    }
+
+    previousWarningsRef.current = currentWarningIds;
+  }, [warnings]);
   if (loading) {
     return (
       <div className="loading">
@@ -67,7 +90,10 @@ export const WarningsPanel: React.FC<WarningsPanelProps> = ({ warnings, loading 
       </thead>
       <tbody>
         {warnings.map((warning) => (
-          <tr key={warning.id}>
+          <tr
+            key={warning.id}
+            className={newWarningIds.has(warning.id) ? 'new-row' : ''}
+          >
             <td>
               <span title={warning.type}>
                 {getTypeIcon(warning.type)} {warning.type.replace('_', ' ')}

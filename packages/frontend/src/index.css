@@ -234,9 +234,47 @@ code {
   background: #f59e0b;
 }
 
+.live-timer {
+  font-weight: 600;
+  color: #10b981;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes highlightRow {
+  0% {
+    background-color: rgba(102, 126, 234, 0.3);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.new-row {
+  animation: slideIn 0.3s ease-out, highlightRow 3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-in;
 }
 
 .empty-state {

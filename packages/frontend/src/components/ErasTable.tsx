@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import type { Era } from '@staking-cc/shared';
 
 interface ErasTableProps {
@@ -6,6 +7,28 @@ interface ErasTableProps {
 }
 
 export const ErasTable: React.FC<ErasTableProps> = ({ eras, loading }) => {
+  const [newEraIds, setNewEraIds] = useState<Set<number>>(new Set());
+  const previousErasRef = useRef<Set<number>>(new Set());
+
+  // Detect new eras and mark them for animation
+  useEffect(() => {
+    const currentEraIds = new Set(eras.map(e => e.eraId));
+    const newEras = new Set<number>();
+
+    currentEraIds.forEach(eraId => {
+      if (!previousErasRef.current.has(eraId)) {
+        newEras.add(eraId);
+      }
+    });
+
+    if (newEras.size > 0) {
+      setNewEraIds(newEras);
+      // Remove animation class after 3 seconds (animation duration)
+      setTimeout(() => setNewEraIds(new Set()), 3000);
+    }
+
+    previousErasRef.current = currentEraIds;
+  }, [eras]);
   if (loading) {
     return (
       <div className="loading">
@@ -42,7 +65,10 @@ export const ErasTable: React.FC<ErasTableProps> = ({ eras, loading }) => {
       </thead>
       <tbody>
         {eras.map((era) => (
-          <tr key={era.eraId}>
+          <tr
+            key={era.eraId}
+            className={newEraIds.has(era.eraId) ? 'new-row' : ''}
+          >
             <td>
               <strong>#{era.eraId}</strong>
             </td>

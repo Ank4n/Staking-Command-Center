@@ -1,7 +1,55 @@
-import { useSessions } from '../hooks/useApi';
+import { useEffect, useRef, useState } from 'react';
+import { useSessions, useStatus } from '../hooks/useApi';
 
 export const SessionsTab: React.FC = () => {
   const { sessions, loading, refetch } = useSessions(100);
+  const { status } = useStatus();
+  const [newSessionIds, setNewSessionIds] = useState<Set<number>>(new Set());
+  const previousSessionsRef = useRef<Set<number>>(new Set());
+  const previousAHBlockRef = useRef<number>(0);
+
+  // Auto-refresh when new Asset Hub blocks arrive (sessions are on AH)
+  useEffect(() => {
+    if (!status) return;
+
+    const currentBlock = status.assetHub.lastBlockNumber;
+
+    // Trigger refetch when a new block arrives
+    if (currentBlock !== previousAHBlockRef.current && previousAHBlockRef.current !== 0) {
+      refetch();
+    }
+
+    previousAHBlockRef.current = currentBlock;
+  }, [status, refetch]);
+
+  // Fallback: also refresh every 6 seconds in case WebSocket misses updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refetch();
+    }, 6000);
+
+    return () => clearInterval(interval);
+  }, [refetch]);
+
+  // Detect new sessions and mark them for animation
+  useEffect(() => {
+    const currentSessionIds = new Set(sessions.map(s => s.sessionId));
+    const newSessions = new Set<number>();
+
+    currentSessionIds.forEach(sessionId => {
+      if (!previousSessionsRef.current.has(sessionId)) {
+        newSessions.add(sessionId);
+      }
+    });
+
+    if (newSessions.size > 0) {
+      setNewSessionIds(newSessions);
+      // Remove animation class after 3 seconds (animation duration)
+      setTimeout(() => setNewSessionIds(new Set()), 3000);
+    }
+
+    previousSessionsRef.current = currentSessionIds;
+  }, [sessions]);
 
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return '—';
@@ -31,16 +79,11 @@ export const SessionsTab: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h3 style={{ margin: 0 }}>Sessions</h3>
-          <div style={{ fontSize: '0.9rem', color: '#666', marginTop: '5px' }}>
-            Total: {sessions.length} sessions
-          </div>
+      <div style={{ marginBottom: '20px' }}>
+        <h3 style={{ margin: 0 }}>Sessions</h3>
+        <div style={{ fontSize: '0.9rem', color: '#666', marginTop: '5px' }}>
+          Total: {sessions.length} sessions
         </div>
-        <button className="btn btn-secondary" onClick={refetch}>
-          Refresh
-        </button>
       </div>
 
       <table className="table">
@@ -55,7 +98,10 @@ export const SessionsTab: React.FC = () => {
         </thead>
         <tbody>
           {sessions.map((session) => (
-            <tr key={session.sessionId}>
+            <tr
+              key={session.sessionId}
+              className={newSessionIds.has(session.sessionId) ? 'new-row' : ''}
+            >
               <td>
                 <strong>#{session.sessionId}</strong>
               </td>

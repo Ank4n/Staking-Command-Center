@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useEvents, useStatus } from '../hooks/useApi';
 import type { BlockchainEvent } from '@staking-cc/shared';
 
@@ -7,6 +7,54 @@ export const EventsTab: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const { events, loading, refetch } = useEvents(activeChain, 500);
   const { status } = useStatus();
+  const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set());
+  const previousEventsRef = useRef<Set<string>>(new Set());
+  const previousChainBlockRef = useRef<number>(0);
+
+  // Auto-refresh when new blocks arrive
+  useEffect(() => {
+    if (!status) return;
+
+    const currentBlock = activeChain === 'rc'
+      ? status.relayChain.lastBlockNumber
+      : status.assetHub.lastBlockNumber;
+
+    // Trigger refetch when a new block arrives
+    if (currentBlock !== previousChainBlockRef.current && previousChainBlockRef.current !== 0) {
+      refetch();
+    }
+
+    previousChainBlockRef.current = currentBlock;
+  }, [status, activeChain, refetch]);
+
+  // Fallback: also refresh every 6 seconds in case WebSocket misses updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refetch();
+    }, 6000);
+
+    return () => clearInterval(interval);
+  }, [refetch]);
+
+  // Detect new events and mark them for animation
+  useEffect(() => {
+    const currentEventIds = new Set(events.map(e => `${e.blockNumber}-${e.id}`));
+    const newEvents = new Set<string>();
+
+    currentEventIds.forEach(eventId => {
+      if (!previousEventsRef.current.has(eventId)) {
+        newEvents.add(eventId);
+      }
+    });
+
+    if (newEvents.size > 0) {
+      setNewEventIds(newEvents);
+      // Remove animation class after 3 seconds (animation duration)
+      setTimeout(() => setNewEventIds(new Set()), 3000);
+    }
+
+    previousEventsRef.current = currentEventIds;
+  }, [events]);
 
   const getSubscanUrl = (eventId: string) => {
     if (!status) return '#';
@@ -59,7 +107,10 @@ export const EventsTab: React.FC = () => {
         </thead>
         <tbody>
           {events.map((event) => (
-            <tr key={`${event.blockNumber}-${event.id}`}>
+            <tr
+              key={`${event.blockNumber}-${event.id}`}
+              className={newEventIds.has(`${event.blockNumber}-${event.id}`) ? 'new-row' : ''}
+            >
               <td>
                 <a
                   href={getSubscanUrl(event.eventId)}
@@ -99,9 +150,6 @@ export const EventsTab: React.FC = () => {
             onClick={() => setActiveChain('ah')}
           >
             Asset Hub Events
-          </button>
-          <button className="btn btn-secondary" onClick={refetch}>
-            Refresh
           </button>
           <input
             type="text"

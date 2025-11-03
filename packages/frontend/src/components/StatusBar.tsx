@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import type { ApiStatus, SyncStatus } from '@staking-cc/shared';
 
 interface StatusBarProps {
@@ -16,23 +17,53 @@ const getSyncStatusDisplay = (syncStatus: SyncStatus): { text: string; className
   }
 };
 
-const formatTimestamp = (timestamp: number): string => {
-  if (timestamp === 0) return 'Never';
-  const date = new Date(timestamp);
-  const now = Date.now();
-  const diff = now - timestamp;
+const LiveTimer: React.FC<{ timestamp: number; blockNumber: number; prefix?: string }> = ({ timestamp, blockNumber, prefix = '' }) => {
+  const [secondsAgo, setSecondsAgo] = useState(0);
+  const [startTime, setStartTime] = useState(Date.now());
+  const previousBlockRef = useRef(blockNumber);
 
-  // If less than 1 minute ago
-  if (diff < 60000) {
-    return 'Just now';
+  // Reset timer to 0 when block number changes
+  useEffect(() => {
+    if (blockNumber !== previousBlockRef.current) {
+      setStartTime(Date.now());
+      setSecondsAgo(0);
+      previousBlockRef.current = blockNumber;
+    }
+  }, [blockNumber]);
+
+  useEffect(() => {
+    const updateTimer = () => {
+      if (timestamp === 0) {
+        setSecondsAgo(0);
+        return;
+      }
+      // Count seconds since this block became the latest
+      const diff = Math.floor((Date.now() - startTime) / 1000);
+      setSecondsAgo(diff);
+    };
+
+    // Update immediately
+    updateTimer();
+
+    // Update every second
+    const interval = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(interval);
+  }, [timestamp, startTime]);
+
+  if (timestamp === 0) return <span>Never</span>;
+
+  if (secondsAgo < 60) {
+    return <span className="live-timer">{prefix}{secondsAgo}s ago</span>;
   }
-  // If less than 1 hour ago
-  if (diff < 3600000) {
-    const minutes = Math.floor(diff / 60000);
-    return `${minutes}m ago`;
+
+  const minutes = Math.floor(secondsAgo / 60);
+  if (minutes < 60) {
+    return <span>{prefix}{minutes}m {secondsAgo % 60}s ago</span>;
   }
-  // Otherwise show time
-  return date.toLocaleTimeString();
+
+  const hours = Math.floor(minutes / 60);
+  return <span>{prefix}{hours}h {minutes % 60}m ago</span>;
 };
 
 export const StatusBar: React.FC<StatusBarProps> = ({ status, isConnected }) => {
@@ -81,7 +112,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ status, isConnected }) => 
             )}
           </div>
           <div className="subvalue" style={{ fontSize: '0.75rem', marginTop: '2px' }}>
-            {formatTimestamp(status.relayChain.lastBlockTime)}
+            <LiveTimer timestamp={status.relayChain.lastBlockTime} blockNumber={status.relayChain.lastBlockNumber} />
             {status.relayChain.syncProgress && (
               <span> • {status.relayChain.syncProgress.blocksRemaining} blocks left</span>
             )}
@@ -101,7 +132,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ status, isConnected }) => 
             )}
           </div>
           <div className="subvalue" style={{ fontSize: '0.75rem', marginTop: '2px' }}>
-            {formatTimestamp(status.assetHub.lastBlockTime)}
+            <LiveTimer timestamp={status.assetHub.lastBlockTime} blockNumber={status.assetHub.lastBlockNumber} />
             {status.assetHub.syncProgress && (
               <span> • {status.assetHub.syncProgress.blocksRemaining} blocks left</span>
             )}
