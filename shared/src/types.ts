@@ -22,7 +22,6 @@ export interface Session {
   sessionId: number;
   blockNumber: number; // FK to Blocks_AH
   activationTimestamp: number | null; // From event data
-  eraId: number | null; // FK to Eras (era that started with this session)
   activeEraId: number | null; // The era that is active during this session
   plannedEraId: number | null; // The era that is being planned during this session
   validatorPointsTotal: number;

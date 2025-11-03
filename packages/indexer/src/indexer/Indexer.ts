@@ -685,26 +685,51 @@ export class Indexer {
         }
       }
 
-      // Query current era information from Asset Hub
-      const apiAt = await this.apiAH.at(await this.apiAH.rpc.chain.getBlockHash(blockNumber));
+      // Query era information from Asset Hub at block n-1 (as per CLAUDE.md instructions)
+      // This is because the event is received at block n, but the era info should be queried from n-1
+      const queryBlockNumber = Math.max(1, blockNumber - 1);
       let activeEraId: number | null = null;
       let plannedEraId: number | null = null;
 
       try {
+        const queryBlockHash = await this.apiAH.rpc.chain.getBlockHash(queryBlockNumber);
+        const apiAt = await this.apiAH.at(queryBlockHash);
+
         // Get active era
         const activeEraOption = await apiAt.query.staking?.activeEra?.();
+        this.logger.info({
+          sessionId,
+          queryBlockNumber,
+          hasActiveEra: !!activeEraOption,
+          isEmpty: activeEraOption?.isEmpty,
+          activeEraRaw: activeEraOption?.toString()
+        }, 'Querying activeEra from Asset Hub');
+
         if (activeEraOption && !activeEraOption.isEmpty) {
           const activeEra = (activeEraOption as any).toJSON();
           activeEraId = activeEra?.index || null;
+          this.logger.info({ activeEra, activeEraId }, 'Parsed activeEra');
         }
 
         // Get planned era (currentEra)
         const currentEraOption = await apiAt.query.staking?.currentEra?.();
+        this.logger.info({
+          sessionId,
+          queryBlockNumber,
+          hasCurrentEra: !!currentEraOption,
+          isEmpty: currentEraOption?.isEmpty,
+          currentEraRaw: currentEraOption?.toString()
+        }, 'Querying currentEra from Asset Hub');
+
         if (currentEraOption && !currentEraOption.isEmpty) {
-          plannedEraId = (currentEraOption as any).toNumber();
+          // currentEra returns a plain number codec, not an object like activeEra
+          // Use toJSON() to get the numeric value
+          const asAny = currentEraOption as any;
+          plannedEraId = typeof asAny.toJSON === 'function' ? asAny.toJSON() : null;
+          this.logger.info({ plannedEraId }, 'Parsed currentEra');
         }
       } catch (e) {
-        this.logger.debug({ error: e }, 'Error querying era info');
+        this.logger.error({ error: e, sessionId, queryBlockNumber }, 'Error querying era info from Asset Hub');
       }
 
       // Create/update session
@@ -712,13 +737,12 @@ export class Indexer {
         sessionId,
         blockNumber,
         activationTimestamp,
-        eraId,
         activeEraId,
         plannedEraId,
         validatorPointsTotal: totalPoints,
       });
 
-      this.logger.info({ sessionId, eraId, activeEraId, plannedEraId, totalPoints }, 'Session created/updated');
+      this.logger.info({ sessionId, activeEraId, plannedEraId, totalPoints }, 'Session created/updated');
 
     } catch (error) {
       this.logger.error({ error, blockNumber, eventType: 'SessionReportReceived' }, 'Error handling SessionReportReceived');

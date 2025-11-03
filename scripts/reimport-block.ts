@@ -182,25 +182,52 @@ async function reimportBlock(chain: 'rc' | 'ah', blockNumber: number) {
             }
           }
 
-          // Query current era information from Asset Hub
+          // Query era information from Asset Hub at block n-1 (as per CLAUDE.md instructions)
+          const queryBlockNumber = Math.max(1, blockNumber - 1);
           let activeEraId: number | null = null;
           let plannedEraId: number | null = null;
 
           try {
+            const queryBlockHash = await api.rpc.chain.getBlockHash(queryBlockNumber);
+            const apiAtQuery = await api.at(queryBlockHash);
+
             // Get active era
-            const activeEraOption = await apiAt.query.staking?.activeEra?.();
+            const activeEraOption = await apiAtQuery.query.staking?.activeEra?.();
+            logger.info({
+              sessionId,
+              queryBlockNumber,
+              hasActiveEra: !!activeEraOption,
+              isEmpty: activeEraOption?.isEmpty,
+              activeEraRaw: activeEraOption?.toString()
+            }, 'Querying activeEra from Asset Hub');
+
             if (activeEraOption && !activeEraOption.isEmpty) {
               const activeEra = (activeEraOption as any).toJSON();
               activeEraId = activeEra?.index || null;
+              logger.info({ activeEra, activeEraId }, 'Parsed activeEra');
             }
 
             // Get planned era (currentEra)
-            const currentEraOption = await apiAt.query.staking?.currentEra?.();
+            const currentEraOption = await apiAtQuery.query.staking?.currentEra?.();
+            logger.info({
+              sessionId,
+              queryBlockNumber,
+              hasCurrentEra: !!currentEraOption,
+              isEmpty: currentEraOption?.isEmpty,
+              currentEraRaw: currentEraOption?.toString(),
+              type: typeof currentEraOption,
+              keys: currentEraOption ? Object.keys(currentEraOption) : []
+            }, 'Querying currentEra from Asset Hub');
+
             if (currentEraOption && !currentEraOption.isEmpty) {
-              plannedEraId = (currentEraOption as any).toNumber();
+              // currentEra returns a plain number codec, not an object like activeEra
+              // Use toJSON() to get the numeric value
+              const asAny = currentEraOption as any;
+              plannedEraId = typeof asAny.toJSON === 'function' ? asAny.toJSON() : null;
+              logger.info({ plannedEraId }, 'Parsed currentEra');
             }
           } catch (e) {
-            logger.debug({ error: e }, 'Error querying era info');
+            logger.error({ error: e, sessionId, queryBlockNumber }, 'Error querying era info from Asset Hub');
           }
 
           // Create/update session
@@ -208,12 +235,11 @@ async function reimportBlock(chain: 'rc' | 'ah', blockNumber: number) {
             sessionId,
             blockNumber,
             activationTimestamp,
-            eraId,
             activeEraId,
             plannedEraId,
             validatorPointsTotal: totalPoints,
           });
-          logger.info({ sessionId, eraId, activeEraId, plannedEraId, totalPoints }, 'Created/updated session');
+          logger.info({ sessionId, activeEraId, plannedEraId, totalPoints }, 'Created/updated session');
         }
       }
     }

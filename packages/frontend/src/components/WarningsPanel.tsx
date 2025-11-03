@@ -12,7 +12,7 @@ export const WarningsPanel: React.FC<WarningsPanelProps> = ({ warnings, loading 
 
   // Detect new warnings and mark them for animation
   useEffect(() => {
-    const currentWarningIds = new Set(warnings.map(w => w.id));
+    const currentWarningIds = new Set(warnings.map(w => w.id).filter((id): id is number => id !== undefined));
     const newWarnings = new Set<number>();
 
     currentWarningIds.forEach(warningId => {
@@ -92,7 +92,7 @@ export const WarningsPanel: React.FC<WarningsPanelProps> = ({ warnings, loading 
         {warnings.map((warning) => (
           <tr
             key={warning.id}
-            className={newWarningIds.has(warning.id) ? 'new-row' : ''}
+            className={warning.id !== undefined && newWarningIds.has(warning.id) ? 'new-row' : ''}
           >
             <td>
               <span title={warning.type}>

@@ -85,18 +85,14 @@ export class StakingDatabase {
         session_id INTEGER PRIMARY KEY,
         block_number INTEGER NOT NULL,
         activation_timestamp INTEGER,
-        era_id INTEGER,
         active_era_id INTEGER,
         planned_era_id INTEGER,
         validator_points_total INTEGER NOT NULL,
-        FOREIGN KEY (block_number) REFERENCES blocks_ah(block_number) ON DELETE CASCADE,
-        FOREIGN KEY (era_id) REFERENCES eras(era_id) ON DELETE SET NULL,
-        FOREIGN KEY (active_era_id) REFERENCES eras(era_id) ON DELETE SET NULL,
-        FOREIGN KEY (planned_era_id) REFERENCES eras(era_id) ON DELETE SET NULL
+        FOREIGN KEY (block_number) REFERENCES blocks_ah(block_number) ON DELETE CASCADE
+        -- Note: No FK constraints for active_era_id and planned_era_id as they may reference future eras
       );
 
       CREATE INDEX IF NOT EXISTS idx_sessions_block ON sessions(block_number);
-      CREATE INDEX IF NOT EXISTS idx_sessions_era ON sessions(era_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_active_era ON sessions(active_era_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_planned_era ON sessions(planned_era_id);
 
@@ -311,14 +307,13 @@ export class StakingDatabase {
   upsertSession(session: Session): void {
     const stmt = this.db.prepare(`
       INSERT INTO sessions (
-        session_id, block_number, activation_timestamp, era_id, active_era_id, planned_era_id, validator_points_total
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        session_id, block_number, activation_timestamp, active_era_id, planned_era_id, validator_points_total
+      ) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         block_number = excluded.block_number,
         activation_timestamp = COALESCE(excluded.activation_timestamp, activation_timestamp),
         active_era_id = COALESCE(excluded.active_era_id, active_era_id),
         planned_era_id = COALESCE(excluded.planned_era_id, planned_era_id),
-        era_id = COALESCE(excluded.era_id, era_id),
         validator_points_total = excluded.validator_points_total
     `);
 
@@ -326,7 +321,6 @@ export class StakingDatabase {
       session.sessionId,
       session.blockNumber,
       session.activationTimestamp,
-      session.eraId,
       session.activeEraId,
       session.plannedEraId,
       session.validatorPointsTotal
@@ -340,7 +334,6 @@ export class StakingDatabase {
       sessionId: row.session_id,
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
-      eraId: row.era_id,
       activeEraId: row.active_era_id,
       plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
@@ -354,7 +347,6 @@ export class StakingDatabase {
       sessionId: row.session_id,
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
-      eraId: row.era_id,
       activeEraId: row.active_era_id,
       plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
@@ -362,13 +354,12 @@ export class StakingDatabase {
   }
 
   getSessionsByEra(eraId: number): Session[] {
-    const stmt = this.db.prepare('SELECT * FROM sessions WHERE era_id = ? ORDER BY session_id');
+    const stmt = this.db.prepare('SELECT * FROM sessions WHERE active_era_id = ? ORDER BY session_id');
     const rows = stmt.all(eraId) as any[];
     return rows.map(row => ({
       sessionId: row.session_id,
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
-      eraId: row.era_id,
       activeEraId: row.active_era_id,
       plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
@@ -382,7 +373,6 @@ export class StakingDatabase {
       sessionId: row.session_id,
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
-      eraId: row.era_id,
       activeEraId: row.active_era_id,
       plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,

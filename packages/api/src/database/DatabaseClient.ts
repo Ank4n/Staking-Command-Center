@@ -189,14 +189,15 @@ export class DatabaseClient {
     };
 
     const sessionRows = this.db
-      .prepare('SELECT * FROM sessions WHERE era_id = ? ORDER BY session_id')
+      .prepare('SELECT * FROM sessions WHERE active_era_id = ? ORDER BY session_id')
       .all(eraId) as any[];
 
     const sessions: Session[] = sessionRows.map(s => ({
       sessionId: s.session_id,
       blockNumber: s.block_number,
       activationTimestamp: s.activation_timestamp,
-      eraId: s.era_id,
+      activeEraId: s.active_era_id,
+      plannedEraId: s.planned_era_id,
       validatorPointsTotal: s.validator_points_total,
     }));
 
@@ -232,7 +233,6 @@ export class DatabaseClient {
       sessionId: row.session_id,
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
-      eraId: row.era_id,
       activeEraId: row.active_era_id,
       plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
@@ -250,7 +250,6 @@ export class DatabaseClient {
       sessionId: row.session_id,
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
-      eraId: row.era_id,
       activeEraId: row.active_era_id,
       plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
@@ -259,13 +258,12 @@ export class DatabaseClient {
 
   getSessionsByEra(eraId: number): Session[] {
     const rows = this.db
-      .prepare('SELECT * FROM sessions WHERE era_id = ? ORDER BY session_id')
+      .prepare('SELECT * FROM sessions WHERE active_era_id = ? ORDER BY session_id')
       .all(eraId) as any[];
     return rows.map(row => ({
       sessionId: row.session_id,
       blockNumber: row.block_number,
       activationTimestamp: row.activation_timestamp,
-      eraId: row.era_id,
       activeEraId: row.active_era_id,
       plannedEraId: row.planned_era_id,
       validatorPointsTotal: row.validator_points_total,
