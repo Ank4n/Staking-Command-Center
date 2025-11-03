@@ -1,0 +1,48 @@
+# Fly.io configuration template for Staking Command Center
+# Copy this file to fly.toml and customize for your deployment
+
+app = "polkadot-scc" # Change to kusama-scc for Kusama
+
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  CHAIN = "polkadot" # or "kusama"
+  DB_PATH = "/data/staking.db"
+  MAX_ERAS = "100"
+  LOG_LEVEL = "info"
+  API_PORT = "4000"
+  API_HOST = "0.0.0.0"
+
+[mounts]
+  source = "staking_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 4000
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    interval = 30000
+    timeout = 5000
+    grace_period = "10s"
+    method = "get"
+    path = "/api/health"
+
+# Configure resources based on your needs
+# Uncomment and adjust as needed:
+#
+# [[vm]]
+#   cpu_kind = "shared"
+#   cpus = 1
+#   memory_mb = 512
