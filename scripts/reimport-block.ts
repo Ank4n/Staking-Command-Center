@@ -166,9 +166,13 @@ async function reimportBlock(chain: 'rc' | 'ah', blockNumber: number) {
               if (previousEra && previousEra.sessionEnd === null) {
                 db.upsertEra({
                   ...previousEra,
-                  sessionEnd: sessionId - 1,
+                  sessionEnd: sessionId, // Session that just ended when new era starts
                 });
-                logger.info({ previousEraId: previousEra.eraId, sessionEnd: sessionId - 1 }, 'Updated previous era');
+                logger.info({
+                  previousEraId: previousEra.eraId,
+                  sessionEnd: sessionId,
+                  newEraId: eraId
+                }, 'Era transition: Updated previous era');
               }
 
               // Create new era
@@ -178,7 +182,12 @@ async function reimportBlock(chain: 'rc' | 'ah', blockNumber: number) {
                 sessionEnd: null,
                 startTime: activationTimestamp,
               });
-              logger.info({ eraId, sessionStart: sessionId + 1, startTime: activationTimestamp }, 'Created new era');
+              logger.info({
+                eraId,
+                sessionStart: sessionId + 1,
+                startTime: activationTimestamp,
+                previousEraEnded: previousEra ? sessionId : null
+              }, 'Created new era');
             }
           }
 

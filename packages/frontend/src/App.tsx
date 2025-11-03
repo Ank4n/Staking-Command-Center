@@ -6,13 +6,12 @@ import { BlocksTab } from './components/BlocksTab';
 import { EventsTab } from './components/EventsTab';
 import { SessionsTab } from './components/SessionsTab';
 import { AdvancedTab } from './components/AdvancedTab';
-import { useStatus, useEras, useWarnings } from './hooks/useApi';
+import { useStatus, useWarnings } from './hooks/useApi';
 
 type TabType = 'blocks' | 'events' | 'sessions' | 'eras' | 'warnings' | 'advanced';
 
 function App() {
   const { status, error: statusError, isConnected } = useStatus();
-  const { eras, loading: erasLoading, error: erasError } = useEras(20);
   const { warnings, loading: warningsLoading, error: warningsError } = useWarnings(50);
   const [activeTab, setActiveTab] = useState<TabType>('blocks');
 
@@ -103,12 +102,7 @@ function App() {
         {activeTab === 'eras' && (
           <div className="section">
             <h2 className="section-title">Recent Eras</h2>
-            {erasError && (
-              <div className="error">
-                <strong>Error:</strong> {erasError}
-              </div>
-            )}
-            <ErasTable eras={eras} loading={erasLoading} />
+            <ErasTable />
           </div>
         )}
 

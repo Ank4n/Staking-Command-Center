@@ -33,6 +33,7 @@ export interface Era {
   sessionStart: number; // end_index + 1 from SessionReportReceived
   sessionEnd: number | null; // Set when next era is created
   startTime: number; // activation_timestamp from event
+  endTime?: number | null; // Calculated from session at sessionEnd (for API responses)
 }
 
 // Warning types (for later)

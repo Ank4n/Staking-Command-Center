@@ -98,25 +98,52 @@ export const SessionsTab: React.FC = () => {
           </tr>
         </thead>
         <tbody>
-          {sessions.map((session) => (
-            <tr
-              key={session.sessionId}
-              className={newSessionIds.has(session.sessionId) ? 'new-row' : ''}
-            >
-              <td>
-                <strong>#{session.sessionId}</strong>
-              </td>
-              <td>#{session.blockNumber.toLocaleString()}</td>
-              <td>
-                {session.activeEraId !== null ? session.activeEraId : '—'}
-              </td>
-              <td>
-                {session.plannedEraId !== null ? session.plannedEraId : '—'}
-              </td>
-              <td>{formatTimestamp(session.activationTimestamp)}</td>
-              <td>{session.validatorPointsTotal.toLocaleString()}</td>
-            </tr>
-          ))}
+          {sessions.map((session, index) => {
+            // Check if election is active (plannedEraId > activeEraId)
+            const isElectionActive =
+              session.plannedEraId !== null &&
+              session.activeEraId !== null &&
+              session.plannedEraId > session.activeEraId;
+
+            // Check if era just started (activeEraId incremented from previous session)
+            // Sessions are ordered DESC, so we compare with next session (lower session ID)
+            const previousSession = index < sessions.length - 1 ? sessions[index + 1] : null;
+            const isEraStart =
+              previousSession &&
+              session.activeEraId !== null &&
+              previousSession.activeEraId !== null &&
+              session.activeEraId > previousSession.activeEraId;
+
+            return (
+              <tr
+                key={session.sessionId}
+                className={newSessionIds.has(session.sessionId) ? 'new-row' : ''}
+              >
+                <td>
+                  <strong>#{session.sessionId}</strong>
+                </td>
+                <td>#{session.blockNumber.toLocaleString()}</td>
+                <td>
+                  {session.activeEraId !== null ? (
+                    <>
+                      {isEraStart && '⭐ '}
+                      {session.activeEraId}
+                    </>
+                  ) : '—'}
+                </td>
+                <td>
+                  {session.plannedEraId !== null ? (
+                    <>
+                      {isElectionActive && '🗳️ '}
+                      {session.plannedEraId}
+                    </>
+                  ) : '—'}
+                </td>
+                <td>{formatTimestamp(session.activationTimestamp)}</td>
+                <td>{session.validatorPointsTotal.toLocaleString()}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

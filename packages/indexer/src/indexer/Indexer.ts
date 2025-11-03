@@ -669,8 +669,13 @@ export class Indexer {
           if (previousEra && previousEra.sessionEnd === null) {
             this.db.upsertEra({
               ...previousEra,
-              sessionEnd: sessionId - 1,
+              sessionEnd: sessionId, // Session that just ended when new era starts
             });
+            this.logger.info({
+              previousEraId: previousEra.eraId,
+              sessionEnd: sessionId,
+              newEraId: eraId
+            }, 'Era transition: Updated previous era end session');
           }
 
           // Create new era (sessionId and eraId are guaranteed to be numbers here)
@@ -681,7 +686,12 @@ export class Indexer {
             startTime: activationTimestamp,
           });
 
-          this.logger.info({ eraId, sessionStart: sessionId + 1, startTime: activationTimestamp }, 'New era created');
+          this.logger.info({
+            eraId,
+            sessionStart: sessionId + 1,
+            startTime: activationTimestamp,
+            previousEraEnded: previousEra ? sessionId : null
+          }, 'New era created');
         }
       }
 

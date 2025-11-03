@@ -162,6 +162,17 @@ export class DatabaseClient {
 
   // ===== ERAS =====
 
+  private getEraEndTime(sessionEnd: number | null): number | null {
+    if (sessionEnd === null) return null;
+
+    // Get the activation timestamp of the session at sessionEnd
+    const session = this.db
+      .prepare('SELECT activation_timestamp FROM sessions WHERE session_id = ?')
+      .get(sessionEnd) as { activation_timestamp: number | null } | undefined;
+
+    return session?.activation_timestamp || null;
+  }
+
   getEras(limit: number = 100): Era[] {
     const rows = this.db
       .prepare('SELECT * FROM eras ORDER BY era_id DESC LIMIT ?')
@@ -171,6 +182,7 @@ export class DatabaseClient {
       sessionStart: row.session_start,
       sessionEnd: row.session_end,
       startTime: row.start_time,
+      endTime: this.getEraEndTime(row.session_end),
     }));
   }
 
@@ -186,6 +198,7 @@ export class DatabaseClient {
       sessionStart: row.session_start,
       sessionEnd: row.session_end,
       startTime: row.start_time,
+      endTime: this.getEraEndTime(row.session_end),
     };
 
     const sessionRows = this.db
