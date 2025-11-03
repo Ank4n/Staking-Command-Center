@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import type { Era } from '@staking-cc/shared';
 import { useStatus, useEras } from '../hooks/useApi';
+import { EraDetailsModal } from './EraDetailsModal';
 
 export const ErasTable: React.FC = () => {
   const { eras, loading, refetch } = useEras(20);
   const { status } = useStatus();
   const [newEraIds, setNewEraIds] = useState<Set<number>>(new Set());
+  const [selectedEraId, setSelectedEraId] = useState<number | null>(null);
   const previousErasRef = useRef<Set<number>>(new Set());
   const previousAHBlockRef = useRef<number>(0);
 
@@ -106,44 +108,56 @@ export const ErasTable: React.FC = () => {
   };
 
   return (
-    <table className="table">
-      <thead>
-        <tr>
-          <th>Era</th>
-          <th>Start Session</th>
-          <th>End Session</th>
-          <th>Sessions</th>
-          <th>Duration</th>
-          <th>Start Time</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {eras.map((era) => (
-          <tr
-            key={era.eraId}
-            className={newEraIds.has(era.eraId) ? 'new-row' : ''}
-          >
-            <td>
-              <strong>#{era.eraId}</strong>
-            </td>
-            <td>{era.sessionStart || '—'}</td>
-            <td>{era.sessionEnd || '—'}</td>
-            <td>
-              <strong>{getSessionsCount(era)}</strong>
-            </td>
-            <td>{formatDuration(era)}</td>
-            <td>{formatTimestamp(era.startTime)}</td>
-            <td>
-              {era.sessionEnd === null ? (
-                <span className="badge badge-success">Active</span>
-              ) : (
-                <span className="badge badge-secondary">Ended</span>
-              )}
-            </td>
+    <>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Era</th>
+            <th>Start Session</th>
+            <th>End Session</th>
+            <th>Sessions</th>
+            <th>Duration</th>
+            <th>Start Time</th>
+            <th>Status</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {eras.map((era) => (
+            <tr
+              key={era.eraId}
+              className={`clickable ${newEraIds.has(era.eraId) ? 'new-row' : ''}`}
+              onClick={() => setSelectedEraId(era.eraId)}
+              title="Click to view era details"
+            >
+              <td>
+                <strong>#{era.eraId}</strong>
+              </td>
+              <td>{era.sessionStart || '—'}</td>
+              <td>{era.sessionEnd || '—'}</td>
+              <td>
+                <strong>{getSessionsCount(era)}</strong>
+              </td>
+              <td>{formatDuration(era)}</td>
+              <td>{formatTimestamp(era.startTime)}</td>
+              <td>
+                {era.sessionEnd === null ? (
+                  <span className="badge badge-success">Active</span>
+                ) : (
+                  <span className="badge badge-secondary">Ended</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Era Details Modal */}
+      {selectedEraId && (
+        <EraDetailsModal
+          eraId={selectedEraId}
+          onClose={() => setSelectedEraId(null)}
+        />
+      )}
+    </>
   );
 };
