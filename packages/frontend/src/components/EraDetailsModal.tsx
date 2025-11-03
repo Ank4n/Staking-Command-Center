@@ -608,6 +608,9 @@ const EventsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
     return `https://kusama.subscan.io/event/${eventId}`;
   };
 
+  // Sort events by block number (oldest first)
+  const sortedEvents = [...eraData.events].sort((a, b) => a.blockNumber - b.blockNumber);
+
   return (
     <div>
       <div style={{ marginBottom: '20px' }}>
@@ -627,7 +630,7 @@ const EventsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
           </tr>
         </thead>
         <tbody>
-          {eraData.events.map((event) => {
+          {sortedEvents.map((event) => {
             const eventType = event.eventType.split('.').pop() || event.eventType;
             const data = JSON.parse(event.data);
             const dataPreview = Object.entries(data).slice(0, 2).map(([k, v]) => `${k}: ${v}`).join(', ');
@@ -753,115 +756,47 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
   // Check if election has started
   const electionStarted = eraData.electionPhases.snapshot.started;
 
-  // Mock config values
-  const config = {
-    expectedEraTime: '24 hours',
-    desiredValidatorCount: 297,
-    minimumTrustScore: '0.85',
-    validatorTreasurySplit: '60% / 40%',
-  };
-
-  // Election stages as per CLAUDE.md
+  // Election stages based on PhaseTransitioned events
   const stages = [
     {
       id: 1,
-      title: 'Election for future era starts',
-      description: `Election triggered when current_era became greater than active_era + 1`,
-      status: electionStarted ? 'completed' : 'pending',
+      title: 'Snapshot',
+      icon: '📸',
+      status: eraData.electionPhases.snapshot.completed ? 'completed' : eraData.electionPhases.snapshot.started ? 'active' : 'pending',
       timestamp: eraData.electionPhases.snapshot.timestamp,
-      details: electionStarted ? [
-        { label: 'Block', value: `#${(eraData.sessions[eraData.electionStartSessionIndex]?.blockNumber || 0).toLocaleString()}` },
-        { label: 'Session', value: `#${eraData.sessions[eraData.electionStartSessionIndex]?.sessionId || '—'}` },
+      eventId: '11501414-6', // Mock - will be from actual event
+      details: eraData.electionPhases.snapshot.started ? [
+        { label: 'Validator Count', value: '1,234 (mocked)' },
+        { label: 'Nominator Count', value: '12,458 (mocked)' },
+        { label: 'Min Nominator Bond', value: '1.5 KSM (mocked)' },
       ] : [],
     },
     {
       id: 2,
-      title: 'Snapshotting',
-      description: 'Taking snapshot of validators and nominators',
-      status: eraData.electionPhases.snapshot.completed ? 'completed' : eraData.electionPhases.snapshot.started ? 'active' : 'pending',
-      timestamp: eraData.electionPhases.snapshot.timestamp,
-      details: eraData.electionPhases.snapshot.started ? [
-        { label: 'Target Count', value: '297 (mocked)' },
-        { label: 'Voter Count', value: '12,458 (mocked)' },
-      ] : [],
+      title: 'Signed',
+      icon: '✍️',
+      status: eraData.electionPhases.signed.completed ? 'completed' : eraData.electionPhases.signed.started ? 'active' : 'pending',
+      timestamp: eraData.electionPhases.signed.timestamp,
+      eventId: '11501431-1', // Mock - will be from actual event
+      details: [],
     },
     {
       id: 3,
-      title: 'Signed Phase',
-      description: 'Accepting signed solutions from validators',
+      title: 'Signed Validation',
+      icon: '✔️',
       status: eraData.electionPhases.signed.completed ? 'completed' : eraData.electionPhases.signed.started ? 'active' : 'pending',
       timestamp: eraData.electionPhases.signed.timestamp,
-      details: eraData.electionPhases.signed.started ? [
-        { label: 'Max Score', value: '0.92 (mocked)' },
-      ] : [],
+      eventId: '11501481-1', // Mock - will be from actual event
+      details: [],
     },
     {
       id: 4,
-      title: 'Signed Validation',
-      description: 'Validating submitted signed solutions',
-      status: eraData.electionPhases.signed.completed ? 'completed' : eraData.electionPhases.signed.started ? 'active' : 'pending',
-      timestamp: eraData.electionPhases.signed.timestamp,
-      details: eraData.electionPhases.signed.completed ? [
-        { label: 'Accepted Score', value: '0.88 (mocked)' },
-      ] : [],
-    },
-    {
-      id: 5,
-      title: 'Unsigned Phase',
-      description: 'Accepting unsigned fallback solutions',
+      title: 'Unsigned',
+      icon: '📝',
       status: eraData.electionPhases.unsigned.completed ? 'completed' : eraData.electionPhases.unsigned.started ? 'active' : 'pending',
       timestamp: eraData.electionPhases.unsigned.timestamp,
-      details: eraData.electionPhases.unsigned.started ? [
-        { label: 'Max Score', value: '0.85 (mocked)' },
-      ] : [],
-    },
-    {
-      id: 6,
-      title: 'Exporting',
-      description: 'Finalizing validator set for next era (may go back to Signed if no solution)',
-      status: eraData.electionPhases.export.completed ? 'completed' : eraData.electionPhases.export.started ? 'active' : 'pending',
-      timestamp: eraData.electionPhases.export.timestamp,
-      details: eraData.electionPhases.export.started ? [
-        { label: 'Validator Count', value: `${eraData.validatorCount || 297}` },
-        { label: 'Desired Count', value: '297' },
-      ] : [],
-    },
-    {
-      id: 7,
-      title: 'Off',
-      description: 'Election complete, waiting for era transition',
-      status: eraData.electionPhases.export.completed ? 'completed' : 'pending',
-      timestamp: null,
+      eventId: '11501738-1', // Mock - will be from actual event
       details: [],
-    },
-    {
-      id: 8,
-      title: 'Validator set sent to RC',
-      description: 'Validator set transmitted to Relay Chain',
-      status: eraData.electionPhases.export.completed ? 'completed' : 'pending',
-      timestamp: null,
-      details: [],
-    },
-    {
-      id: 9,
-      title: 'Validator queued',
-      description: 'Validators queued on Relay Chain for next era',
-      status: !eraData.isActive ? 'completed' : 'pending',
-      timestamp: null,
-      details: [],
-    },
-    {
-      id: 10,
-      title: 'Era Ended / Activation timestamp received',
-      description: 'New era started, rewards available to claim',
-      status: !eraData.isActive ? 'completed' : 'pending',
-      timestamp: eraData.endTime,
-      details: !eraData.isActive && eraData.inflation ? [
-        { label: 'Inflation', value: eraData.inflation.totalMinted },
-        { label: 'Validators', value: eraData.inflation.validatorRewards },
-        { label: 'Treasury', value: eraData.inflation.treasury },
-        { label: 'Era Duration', value: eraData.duration },
-      ] : [],
     },
   ];
 
@@ -877,132 +812,110 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
     return '○';
   };
 
+  const getSubscanEventLink = (eventId: string) => {
+    return `https://assethub-kusama.subscan.io/event/${eventId}`;
+  };
+
   return (
     <div style={{ width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>
       <div style={{ marginBottom: '30px' }}>
-        <h3 style={{ margin: 0, marginBottom: '10px' }}>Election Timeline for Era {eraData.eraId + 1}</h3>
+        <h3 style={{ margin: 0, marginBottom: '10px' }}>Election Phases</h3>
         <div style={{ fontSize: '0.9rem', color: '#666' }}>
-          {electionStarted ? 'Election process for selecting validators' : `Waiting for election to be triggered (expected: ~${new Date(Date.now() + 4 * 60 * 60 * 1000).toLocaleString()})`}
+          {electionStarted ? `Multi-block election for Era ${eraData.eraId + 1}` : `Waiting for election to start`}
         </div>
       </div>
 
-      {/* Config Values */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-        gap: '15px',
-        marginBottom: '30px',
-        padding: '20px',
-        background: '#252525',
-        borderRadius: '8px',
-        width: '100%',
-        overflowX: 'hidden',
-      }}>
-        <div>
-          <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase' }}>
-            Expected Era Time
-          </div>
-          <div style={{ fontSize: '16px', fontWeight: '600', color: '#aaa' }}>
-            {config.expectedEraTime} (mocked)
-          </div>
-        </div>
-        <div>
-          <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase' }}>
-            Desired Validator Count
-          </div>
-          <div style={{ fontSize: '16px', fontWeight: '600', color: '#aaa' }}>
-            {config.desiredValidatorCount} (mocked)
-          </div>
-        </div>
-        <div>
-          <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase' }}>
-            Minimum Trust Score
-          </div>
-          <div style={{ fontSize: '16px', fontWeight: '600', color: '#aaa' }}>
-            {config.minimumTrustScore} (mocked)
-          </div>
-        </div>
-        <div>
-          <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase' }}>
-            Validator / Treasury Split
-          </div>
-          <div style={{ fontSize: '16px', fontWeight: '600', color: '#aaa' }}>
-            {config.validatorTreasurySplit} (mocked)
-          </div>
-        </div>
-      </div>
-
-      {/* Election Stages Flowchart */}
-      <div style={{ position: 'relative', paddingLeft: '40px', width: '100%', overflowX: 'hidden' }}>
-        {/* Vertical line */}
+      {/* Election Timeline */}
+      <div style={{ position: 'relative', paddingLeft: '50px', width: '100%', overflowX: 'hidden' }}>
+        {/* Vertical timeline line */}
         <div style={{
           position: 'absolute',
-          left: '20px',
-          top: '20px',
-          bottom: '20px',
-          width: '3px',
-          background: 'linear-gradient(to bottom, #667eea, #444)',
+          left: '25px',
+          top: '30px',
+          bottom: '30px',
+          width: '4px',
+          background: 'linear-gradient(to bottom, #667eea 0%, #10b981 100%)',
+          borderRadius: '2px',
         }} />
 
-        {stages.map((stage) => (
-          <div key={stage.id} style={{ position: 'relative', marginBottom: '25px' }}>
-            {/* Timeline dot */}
+        {stages.map((stage, index) => (
+          <div key={stage.id} style={{ position: 'relative', marginBottom: '30px' }}>
+            {/* Timeline dot/icon */}
             <div style={{
               position: 'absolute',
-              left: '-28px',
-              top: '20px',
-              width: '18px',
-              height: '18px',
+              left: '-38px',
+              top: '25px',
+              width: '26px',
+              height: '26px',
               borderRadius: '50%',
-              background: getStatusColor(stage.status),
-              border: '3px solid #1a1a1a',
+              background: stage.status === 'completed' ? '#10b981' : stage.status === 'active' ? '#667eea' : '#333',
+              border: '4px solid #1a1a1a',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '10px',
-              color: 'white',
-              fontWeight: '700',
+              fontSize: '14px',
+              zIndex: 2,
+              boxShadow: stage.status === 'active' ? '0 0 15px rgba(102, 126, 234, 0.6)' : 'none',
+              animation: stage.status === 'active' ? 'pulse 2s ease-in-out infinite' : 'none',
             }}>
-              {getStatusIcon(stage.status)}
+              {stage.icon}
             </div>
 
             {/* Stage Card */}
             <div style={{
               background: stage.status === 'active' ? '#2a2a3e' : '#252525',
-              border: `2px solid ${stage.status === 'active' ? '#667eea' : '#333'}`,
+              border: `2px solid ${stage.status === 'active' ? '#667eea' : stage.status === 'completed' ? '#10b981' : '#333'}`,
               borderRadius: '8px',
               padding: '20px',
               transition: 'all 0.3s ease',
+              opacity: stage.status === 'pending' ? 0.5 : 1,
+              boxShadow: stage.status === 'active' ? '0 4px 20px rgba(102, 126, 234, 0.2)' : 'none',
             }}>
               {/* Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '10px' }}>
-                <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '5px' }}>
-                    <span style={{
-                      fontSize: '11px',
-                      fontWeight: '700',
-                      color: '#888',
-                      background: '#1a1a1a',
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                    }}>
-                      STAGE {stage.id}
+                    <span style={{ fontSize: '18px', fontWeight: '700', color: '#fff' }}>
+                      {stage.title}
                     </span>
                     <span style={{
-                      fontSize: '11px',
+                      fontSize: '10px',
                       fontWeight: '700',
                       color: getStatusColor(stage.status),
                       textTransform: 'uppercase',
+                      background: '#1a1a1a',
+                      padding: '3px 8px',
+                      borderRadius: '4px',
                     }}>
                       {stage.status}
                     </span>
                   </div>
-                  <div style={{ fontSize: '16px', fontWeight: '700', color: '#fff', marginBottom: '5px' }}>
-                    {stage.title}
-                  </div>
-                  <div style={{ fontSize: '13px', color: '#888' }}>
-                    {stage.description}
-                  </div>
+
+                  {/* Timestamp and Link */}
+                  {stage.timestamp && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px', color: '#888' }}>
+                      <span>{formatTimestamp(stage.timestamp)}</span>
+                      <span style={{ color: '#555' }}>•</span>
+                      <a
+                        href={getSubscanEventLink(stage.eventId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          color: '#667eea',
+                          textDecoration: 'none',
+                          fontFamily: 'monospace',
+                          fontSize: '11px',
+                        }}
+                      >
+                        View on Subscan ↗
+                      </a>
+                    </div>
+                  )}
+                  {!stage.timestamp && (
+                    <div style={{ fontSize: '12px', color: '#666' }}>
+                      Waiting...
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1012,7 +925,6 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
                   gap: '15px',
-                  marginTop: '15px',
                   paddingTop: '15px',
                   borderTop: '1px solid #333',
                 }}>
@@ -1021,24 +933,11 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
                       <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase' }}>
                         {detail.label}
                       </div>
-                      <div style={{ fontSize: '14px', fontWeight: '600', color: '#aaa', fontFamily: 'monospace' }}>
+                      <div style={{ fontSize: '14px', fontWeight: '600', color: '#aaa' }}>
                         {detail.value}
                       </div>
                     </div>
                   ))}
-                </div>
-              )}
-
-              {/* Timestamp */}
-              {stage.timestamp && (
-                <div style={{
-                  marginTop: '15px',
-                  paddingTop: '15px',
-                  borderTop: '1px solid #333',
-                  fontSize: '12px',
-                  color: '#666',
-                }}>
-                  <strong style={{ color: '#888' }}>Timestamp:</strong> {formatTimestamp(stage.timestamp)}
                 </div>
               )}
             </div>
