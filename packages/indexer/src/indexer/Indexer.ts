@@ -2,6 +2,7 @@ import type { ApiPromise } from '@polkadot/api';
 import type { Header, EventRecord } from '@polkadot/types/interfaces';
 import type { Logger } from 'pino';
 import type { StakingDatabase } from '../database';
+import { shouldTrackEventRC, shouldTrackEventAH } from '../utils/eventFilters';
 
 export class Indexer {
   private apiRC: ApiPromise;
@@ -511,9 +512,15 @@ export class Indexer {
       const record = events[eventIndex];
       const { event } = record;
 
+      const eventType = `${event.section}.${event.method}`;
+
+      // Only track events specified in CLAUDE.md Events Tracking section
+      if (!shouldTrackEventRC(eventType)) {
+        continue; // Skip this event
+      }
+
       // Create event_id in format: blockNumber-eventIndex (for Subscan linking)
       const eventId = `${blockNumber}-${eventIndex}`;
-      const eventType = `${event.section}.${event.method}`;
 
       this.db.insertEventRC({
         blockNumber,
@@ -549,9 +556,15 @@ export class Indexer {
       const record = events[eventIndex];
       const { event } = record;
 
+      const eventType = `${event.section}.${event.method}`;
+
+      // Only track events specified in CLAUDE.md Events Tracking section
+      if (!shouldTrackEventAH(eventType)) {
+        continue; // Skip this event
+      }
+
       // Create event_id in format: blockNumber-eventIndex (for Subscan linking)
       const eventId = `${blockNumber}-${eventIndex}`;
-      const eventType = `${event.section}.${event.method}`;
 
       this.db.insertEventAH({
         blockNumber,
@@ -572,7 +585,7 @@ export class Indexer {
    */
   private async processSpecialEvent(event: any, eventType: string, blockNumber: number, blockTimestamp: number): Promise<void> {
     // Look for stakingRelaychainClient.SessionReportReceived event
-    if (eventType === 'stakingRelaychainClient.SessionReportReceived') {
+    if (eventType.toLowerCase() === 'stakingrelaychainclient.sessionreportreceived') {
       await this.handleSessionReportReceived(event, blockNumber, blockTimestamp);
     }
   }

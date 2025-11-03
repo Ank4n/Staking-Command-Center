@@ -69,8 +69,9 @@ export const EventsTab: React.FC = () => {
 
   const filteredEvents = events.filter((event) => {
     if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
     return (
-      event.eventType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      event.eventType.toLowerCase().includes(searchLower) ||
       event.eventId.includes(searchTerm) ||
       event.blockNumber.toString().includes(searchTerm)
     );
@@ -123,7 +124,18 @@ export const EventsTab: React.FC = () => {
               </td>
               <td>#{event.blockNumber.toLocaleString()}</td>
               <td>
-                <code style={{ fontSize: '0.85rem' }}>{event.eventType}</code>
+                <code style={{ fontSize: '0.85rem' }}>
+                  {(() => {
+                    const [pallet, eventName] = event.eventType.split('.');
+                    return (
+                      <>
+                        <span style={{ color: '#a78bfa' }}>{pallet}</span>
+                        <span style={{ color: '#888' }}>.</span>
+                        <span style={{ color: '#60a5fa' }}>{eventName}</span>
+                      </>
+                    );
+                  })()}
+                </code>
               </td>
               <td style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 <small>{event.data.substring(0, 100)}{event.data.length > 100 ? '...' : ''}</small>
