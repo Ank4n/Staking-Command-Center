@@ -12,6 +12,7 @@ export class Indexer {
   private isRunning: boolean = false;
   private unsubscribeRC: (() => void) | null = null;
   private unsubscribeAH: (() => void) | null = null;
+  private gapFillerInterval: NodeJS.Timeout | null = null;
 
   constructor(apiRC: ApiPromise, apiAH: ApiPromise, db: StakingDatabase, logger: Logger, syncBlocks: number) {
     this.apiRC = apiRC;
@@ -96,10 +97,106 @@ export class Indexer {
       this.subscribeToNewBlocksRC();
       this.subscribeToNewBlocksAH();
 
+      // Start periodic gap filler (every 30 seconds)
+      this.startGapFiller();
+
       this.logger.info('Indexer started successfully');
     } catch (error) {
       this.logger.error({ error }, 'Failed to start indexer');
       throw error;
+    }
+  }
+
+  /**
+   * Start periodic gap detection and filling
+   */
+  private startGapFiller(): void {
+    this.logger.info('Starting periodic gap filler (every 30 seconds)');
+
+    this.gapFillerInterval = setInterval(async () => {
+      try {
+        await this.fillGaps();
+      } catch (error) {
+        this.logger.error({ error }, 'Error in gap filler');
+      }
+    }, 30000); // Run every 30 seconds
+  }
+
+  /**
+   * Detect and fill gaps in recent blocks
+   */
+  private async fillGaps(): Promise<void> {
+    // Get current heights
+    const currentHeightRC = this.db.getState('currentHeightRC');
+    const currentHeightAH = this.db.getState('currentHeightAH');
+
+    if (!currentHeightRC || !currentHeightAH) {
+      return;
+    }
+
+    const heightRC = parseInt(currentHeightRC, 10);
+    const heightAH = parseInt(currentHeightAH, 10);
+
+    // Check last 50 blocks for gaps
+    const checkRangeRC = 50;
+    const checkRangeAH = 50;
+
+    const startRC = Math.max(1, heightRC - checkRangeRC);
+    const startAH = Math.max(1, heightAH - checkRangeAH);
+
+    // Find gaps in RC
+    const gapsRC: number[] = [];
+    for (let i = startRC; i <= heightRC; i++) {
+      if (!this.db.blockExistsRC(i)) {
+        gapsRC.push(i);
+      }
+    }
+
+    // Find gaps in AH
+    const gapsAH: number[] = [];
+    for (let i = startAH; i <= heightAH; i++) {
+      if (!this.db.blockExistsAH(i)) {
+        gapsAH.push(i);
+      }
+    }
+
+    if (gapsRC.length === 0 && gapsAH.length === 0) {
+      this.logger.debug('Gap filler: No gaps found in recent blocks');
+      return;
+    }
+
+    this.logger.warn({
+      gapsRC: gapsRC.length,
+      gapsAH: gapsAH.length,
+      rcBlocks: gapsRC.slice(0, 10),
+      ahBlocks: gapsAH.slice(0, 10)
+    }, 'Gap filler: Found missing blocks, filling now...');
+
+    // Fill RC gaps
+    for (const blockNumber of gapsRC) {
+      try {
+        await this.processBlockByNumberRC(blockNumber);
+        this.logger.info({ blockNumber, chain: 'RC' }, 'Gap filled');
+      } catch (error) {
+        this.logger.error({ error, blockNumber, chain: 'RC' }, 'Failed to fill gap');
+      }
+    }
+
+    // Fill AH gaps
+    for (const blockNumber of gapsAH) {
+      try {
+        await this.processBlockByNumberAH(blockNumber);
+        this.logger.info({ blockNumber, chain: 'AH' }, 'Gap filled');
+      } catch (error) {
+        this.logger.error({ error, blockNumber, chain: 'AH' }, 'Failed to fill gap');
+      }
+    }
+
+    if (gapsRC.length > 0 || gapsAH.length > 0) {
+      this.logger.info({
+        filledRC: gapsRC.length,
+        filledAH: gapsAH.length
+      }, 'Gap filling completed');
     }
   }
 
@@ -296,6 +393,8 @@ export class Indexer {
       }
 
       let success = false;
+      let lastError: any = null;
+
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           await this.processBlockByNumberRC(blockNumber);
@@ -304,10 +403,16 @@ export class Indexer {
           // Update current height when new blocks arrive
           this.db.setState('currentHeightRC', blockNumber.toString());
 
-          this.logger.debug({ blockNumber, chain: 'RC' }, 'New RC block processed');
+          this.logger.info({ blockNumber, chain: 'RC' }, 'New RC block processed');
           break;
         } catch (error) {
-          this.logger.warn({ error, blockNumber, attempt, chain: 'RC' }, `Error processing new RC block (attempt ${attempt}/3)`);
+          lastError = error;
+          this.logger.warn({
+            error: error instanceof Error ? error.message : String(error),
+            blockNumber,
+            attempt,
+            chain: 'RC'
+          }, `Error processing new RC block (attempt ${attempt}/3)`);
 
           if (attempt < 3) {
             await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
@@ -316,7 +421,13 @@ export class Indexer {
       }
 
       if (!success) {
-        this.logger.error({ blockNumber, chain: 'RC' }, 'Failed to process new RC block after 3 attempts');
+        const errorMsg = lastError instanceof Error ? lastError.message : String(lastError);
+        this.logger.error({
+          blockNumber,
+          chain: 'RC',
+          error: errorMsg,
+          stack: lastError instanceof Error ? lastError.stack : undefined
+        }, '❌ CRITICAL: Failed to process new RC block after 3 attempts - BLOCK WILL BE MISSING');
       }
     }) as unknown as () => void;
   }
@@ -338,6 +449,8 @@ export class Indexer {
       }
 
       let success = false;
+      let lastError: any = null;
+
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           await this.processBlockByNumberAH(blockNumber);
@@ -346,10 +459,16 @@ export class Indexer {
           // Update current height when new blocks arrive
           this.db.setState('currentHeightAH', blockNumber.toString());
 
-          this.logger.debug({ blockNumber, chain: 'AH' }, 'New AH block processed');
+          this.logger.info({ blockNumber, chain: 'AH' }, 'New AH block processed');
           break;
         } catch (error) {
-          this.logger.warn({ error, blockNumber, attempt, chain: 'AH' }, `Error processing new AH block (attempt ${attempt}/3)`);
+          lastError = error;
+          this.logger.warn({
+            error: error instanceof Error ? error.message : String(error),
+            blockNumber,
+            attempt,
+            chain: 'AH'
+          }, `Error processing new AH block (attempt ${attempt}/3)`);
 
           if (attempt < 3) {
             await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
@@ -358,7 +477,13 @@ export class Indexer {
       }
 
       if (!success) {
-        this.logger.error({ blockNumber, chain: 'AH' }, 'Failed to process new AH block after 3 attempts');
+        const errorMsg = lastError instanceof Error ? lastError.message : String(lastError);
+        this.logger.error({
+          blockNumber,
+          chain: 'AH',
+          error: errorMsg,
+          stack: lastError instanceof Error ? lastError.stack : undefined
+        }, '❌ CRITICAL: Failed to process new AH block after 3 attempts - BLOCK WILL BE MISSING');
       }
     }) as unknown as () => void;
   }
@@ -557,6 +682,11 @@ export class Indexer {
     if (this.unsubscribeAH) {
       this.unsubscribeAH();
       this.unsubscribeAH = null;
+    }
+
+    if (this.gapFillerInterval) {
+      clearInterval(this.gapFillerInterval);
+      this.gapFillerInterval = null;
     }
 
     this.isRunning = false;
