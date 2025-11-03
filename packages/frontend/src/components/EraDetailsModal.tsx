@@ -199,24 +199,28 @@ const OverviewTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
   const timelineSteps = [
     {
       id: 'era-start',
+      icon: '🚀',
       label: 'Era Start',
       timestamp: eraData.startTime,
       status: 'completed' as const,
     },
     {
       id: 'election-started',
+      icon: '🗳️',
       label: 'Election Started',
       timestamp: electionStartTime,
       status: eraData.electionPhases.snapshot.started ? 'completed' as const : 'pending' as const,
     },
     {
       id: 'election-ended',
+      icon: '✅',
       label: 'Election Ended',
       timestamp: electionEndTime,
       status: eraData.electionPhases.export.completed ? 'completed' as const : 'pending' as const,
     },
     {
       id: 'era-ended',
+      icon: '🏁',
       label: 'Era Ended',
       timestamp: eraData.endTime,
       status: eraData.isActive ? 'pending' as const : 'completed' as const,
@@ -245,18 +249,32 @@ const OverviewTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
               alignItems: 'center',
               minWidth: '150px',
             }}>
+              {/* Icon */}
+              <div style={{
+                fontSize: '32px',
+                marginBottom: '10px',
+                opacity: step.status === 'completed' ? 1 : 0.3,
+                filter: step.status === 'completed' ? 'none' : 'grayscale(100%)',
+                transition: 'all 0.3s ease',
+              }}>
+                {step.icon}
+              </div>
+              {/* Label */}
               <div style={{
                 fontSize: '13px',
                 fontWeight: '600',
-                color: step.status === 'completed' ? '#aaa' : '#666',
+                color: step.status === 'completed' ? '#fff' : '#666',
                 marginBottom: '8px',
+                textAlign: 'center',
               }}>
                 {step.label}
               </div>
+              {/* Timestamp */}
               <div style={{
-                fontSize: '12px',
+                fontSize: '11px',
                 color: step.status === 'completed' ? '#667eea' : '#555',
                 fontFamily: 'monospace',
+                textAlign: 'center',
               }}>
                 {step.timestamp ? new Date(step.timestamp).toLocaleString('en-US', {
                   month: 'short',
@@ -270,6 +288,7 @@ const OverviewTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
               <div style={{
                 fontSize: '24px',
                 color: step.status === 'completed' ? '#667eea' : '#444',
+                transition: 'color 0.3s ease',
               }}>
                 →
               </div>
@@ -437,7 +456,7 @@ const SessionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
   };
 
   return (
-    <div style={{ paddingTop: '10px' }}>
+    <div style={{ width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>
       <div style={{ marginBottom: '30px' }}>
         <h3 style={{ margin: 0, marginBottom: '5px' }}>Sessions Timeline</h3>
         <div style={{ fontSize: '0.9rem', color: '#666' }}>
@@ -446,7 +465,7 @@ const SessionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
       </div>
 
       {/* Vertical Timeline */}
-      <div style={{ position: 'relative', paddingLeft: '40px' }}>
+      <div style={{ position: 'relative', paddingLeft: '40px', width: '100%', overflowX: 'hidden' }}>
         {/* Vertical line */}
         <div style={{
           position: 'absolute',
@@ -859,7 +878,7 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
   };
 
   return (
-    <div>
+    <div style={{ width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>
       <div style={{ marginBottom: '30px' }}>
         <h3 style={{ margin: 0, marginBottom: '10px' }}>Election Timeline for Era {eraData.eraId + 1}</h3>
         <div style={{ fontSize: '0.9rem', color: '#666' }}>
@@ -876,6 +895,8 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
         padding: '20px',
         background: '#252525',
         borderRadius: '8px',
+        width: '100%',
+        overflowX: 'hidden',
       }}>
         <div>
           <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase' }}>
@@ -912,7 +933,7 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
       </div>
 
       {/* Election Stages Flowchart */}
-      <div style={{ position: 'relative', paddingLeft: '40px' }}>
+      <div style={{ position: 'relative', paddingLeft: '40px', width: '100%', overflowX: 'hidden' }}>
         {/* Vertical line */}
         <div style={{
           position: 'absolute',
