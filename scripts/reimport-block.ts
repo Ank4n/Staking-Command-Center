@@ -250,6 +250,159 @@ async function reimportBlock(chain: 'rc' | 'ah', blockNumber: number) {
           });
           logger.info({ sessionId, activeEraId, plannedEraId, totalPoints }, 'Created/updated session');
         }
+
+        // Process PhaseTransitioned event (MultiBlockElection.PhaseTransitioned)
+        if (eventType.toLowerCase() === 'multiblockelection.phasetransitioned') {
+          logger.info({ eventType, blockNumber }, 'Processing PhaseTransitioned event');
+
+          try {
+            const fromPhase = event.data.from?.toString() || '';
+            const toPhase = event.data.to?.toString() || '';
+
+            logger.info({ fromPhase, toPhase, blockNumber }, 'Phase transition detected');
+
+            // Query round number
+            const round = await apiAt.query.multiBlockElection?.round?.();
+            const roundNumber = round && typeof round.toNumber === 'function' ? round.toNumber() : 0;
+
+            // Query current era for era_id
+            const currentEra = await apiAt.query.staking?.currentEra?.();
+            const eraId = currentEra && typeof currentEra.toJSON === 'function' ? currentEra.toJSON() : null;
+
+            if (!eraId) {
+              logger.warn({ blockNumber }, 'Could not get era_id for election phase');
+              continue;
+            }
+
+            let phaseData: any = {
+              eraId,
+              round: roundNumber,
+              phase: toPhase,
+              blockNumber,
+              eventId,
+              timestamp: blockTimestamp,
+            };
+
+            // Query phase-specific data
+            if (toPhase === 'Snapshot') {
+              // Query validator and nominator counts
+              const validatorCount = await apiAt.query.staking?.counterForValidators?.();
+              const nominatorCount = await apiAt.query.staking?.counterForNominators?.();
+              const targetValidatorCount = await apiAt.query.staking?.validatorCount?.();
+
+              phaseData.validatorCandidates = validatorCount && typeof validatorCount.toNumber === 'function' ? validatorCount.toNumber() : null;
+              phaseData.nominatorCandidates = nominatorCount && typeof nominatorCount.toNumber === 'function' ? nominatorCount.toNumber() : null;
+              phaseData.targetValidatorCount = targetValidatorCount && typeof targetValidatorCount.toNumber === 'function' ? targetValidatorCount.toNumber() : null;
+
+              logger.info({
+                validatorCandidates: phaseData.validatorCandidates,
+                nominatorCandidates: phaseData.nominatorCandidates,
+                targetValidatorCount: phaseData.targetValidatorCount
+              }, 'Snapshot phase data');
+            }
+
+            if (toPhase === 'Signed') {
+              // Query sorted scores and minimum score
+              const sortedScoresCodec = await apiAt.query.multiBlockElectionSigned?.sortedScores?.(roundNumber);
+              const minimumScoreCodec = await apiAt.query.multiBlockElectionVerifier?.minimumScore?.();
+
+              if (sortedScoresCodec) {
+                const sortedScores = sortedScoresCodec.toJSON();
+                // Get top 5 scores
+                const top5 = Array.isArray(sortedScores) ? sortedScores.slice(0, 5) : [];
+                phaseData.sortedScores = JSON.stringify(top5);
+              }
+
+              if (minimumScoreCodec && !minimumScoreCodec.isEmpty) {
+                phaseData.minimumScore = minimumScoreCodec.toString();
+              }
+
+              logger.info({ sortedScores: phaseData.sortedScores, minimumScore: phaseData.minimumScore }, 'Signed phase data');
+            }
+
+            if (toPhase === 'SignedValidation') {
+              // Query queued solution score
+              const queuedScoreCodec = await apiAt.query.multiBlockElectionVerifier?.queuedSolutionScore?.(roundNumber);
+
+              if (queuedScoreCodec && !queuedScoreCodec.isEmpty) {
+                phaseData.queuedSolutionScore = queuedScoreCodec.toString();
+              }
+
+              logger.info({ queuedSolutionScore: phaseData.queuedSolutionScore }, 'SignedValidation phase data');
+            }
+
+            if (toPhase === 'Off' && fromPhase === 'Export') {
+              // Query elected validators at block n-1
+              const queryBlockNumber = Math.max(1, blockNumber - 1);
+              const queryBlockHash = await api.rpc.chain.getBlockHash(queryBlockNumber);
+              const apiAtQuery = await api.at(queryBlockHash);
+
+              const electableStashes = await apiAtQuery.query.staking?.electableStashes?.();
+
+              if (electableStashes) {
+                const stashesList = electableStashes.toJSON();
+                phaseData.validatorsElected = Array.isArray(stashesList) ? stashesList.length : 0;
+
+                // Also update the era table
+                db.updateEraValidatorCount(eraId, phaseData.validatorsElected);
+              }
+
+              logger.info({ validatorsElected: phaseData.validatorsElected }, 'Export→Off transition data');
+            }
+
+            // Check if era exists before inserting (to avoid foreign key constraint)
+            const existingEra = db.getEra(eraId);
+            if (!existingEra) {
+              logger.warn({
+                eraId,
+                phase: toPhase,
+                blockNumber,
+                message: 'Era does not exist yet, skipping election phase insert. Will be populated when era is created.'
+              }, 'Skipping election phase - era not found');
+            } else {
+              // Insert election phase
+              db.insertElectionPhase(phaseData);
+              logger.info({ phase: toPhase, eraId, round: roundNumber }, 'Inserted election phase');
+            }
+
+          } catch (error) {
+            logger.error({ error, blockNumber, eventType }, 'Error processing PhaseTransitioned event');
+          }
+        }
+
+        // Process EraPaid event (Staking.EraPaid)
+        if (eventType.toLowerCase() === 'staking.erapaid') {
+          logger.info({ eventType, blockNumber }, 'Processing EraPaid event');
+
+          try {
+            const eraIndex = event.data.eraIndex ? event.data.eraIndex.toNumber() : null;
+            const validatorPayout = event.data.validatorPayout ? event.data.validatorPayout.toString() : '0';
+            const remainder = event.data.remainder ? event.data.remainder.toString() : '0';
+
+            if (eraIndex === null) {
+              logger.warn({ blockNumber }, 'EraPaid missing eraIndex');
+              continue;
+            }
+
+            // Calculate total inflation
+            const validatorBigInt = BigInt(validatorPayout);
+            const remainderBigInt = BigInt(remainder);
+            const totalInflation = (validatorBigInt + remainderBigInt).toString();
+
+            // Update era inflation data
+            db.updateEraInflation(eraIndex, totalInflation, validatorPayout, remainder);
+
+            logger.info({
+              eraIndex,
+              totalInflation,
+              validatorPayout,
+              treasury: remainder
+            }, 'Updated era inflation');
+
+          } catch (error) {
+            logger.error({ error, blockNumber, eventType }, 'Error processing EraPaid event');
+          }
+        }
       }
     }
 

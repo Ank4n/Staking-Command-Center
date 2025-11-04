@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useStatus } from '../hooks/useApi';
+import { useStatus, fetchElectionPhasesByEra } from '../hooks/useApi';
 import { generateMockEraData, type MockEraDetails } from '../utils/mockEraData';
 import type { Era, Session, Warning, BlockchainEvent } from '@staking-cc/shared';
 
@@ -26,12 +26,13 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
 
     const fetchEraData = async () => {
       try {
-        // Fetch era, sessions, warnings, and events in parallel
-        const [eraRes, sessionsRes, warningsRes, eventsRes] = await Promise.all([
+        // Fetch era, sessions, warnings, events, and election phases in parallel
+        const [eraRes, sessionsRes, warningsRes, eventsRes, electionPhases] = await Promise.all([
           fetch(`${API_BASE_URL}/api/eras/${eraId}`),
           fetch(`${API_BASE_URL}/api/eras/${eraId}/sessions`),
           fetch(`${API_BASE_URL}/api/eras/${eraId}/warnings`),
           fetch(`${API_BASE_URL}/api/events/ah?limit=100`),
+          fetchElectionPhasesByEra(eraId),
         ]);
 
         if (!eraRes.ok) throw new Error('Failed to fetch era');
@@ -41,9 +42,11 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
         const warnings: Warning[] = warningsRes.ok ? await warningsRes.json() : [];
         const allEvents: BlockchainEvent[] = eventsRes.ok ? await eventsRes.json() : [];
 
-        // Filter events for this era (based on block numbers from sessions)
-        const sessionBlockNumbers = new Set(sessions.map(s => s.blockNumber));
-        const eraEvents = allEvents.filter(e => sessionBlockNumbers.has(e.blockNumber));
+        // Filter events for this era (by block range from era start to end)
+        // Get block range from first and last sessions
+        const startBlock = sessions.length > 0 ? Math.min(...sessions.map(s => s.blockNumber)) : 0;
+        const endBlock = sessions.length > 0 ? Math.max(...sessions.map(s => s.blockNumber)) : Number.MAX_SAFE_INTEGER;
+        const eraEvents = allEvents.filter(e => e.blockNumber >= startBlock && e.blockNumber <= endBlock);
 
         // Calculate derived data
         const isActive = era.sessionEnd === null;
@@ -58,11 +61,44 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
           ? `${hours.toFixed(1)} hrs`
           : `${Math.floor(hours / 24)}d ${Math.floor(hours % 24)}h`;
 
-        // For now, keep mocking election phases and inflation
-        // These will be replaced once election tracking is implemented
+        // Use mock data for fallback when election phases are not available
         const mockData = generateMockEraData(eraId, status?.currentEra || undefined);
 
-        // Merge real data with mock data
+        // Transform election phases from database into UI format
+        // If no election phases exist, use mocked data
+        const hasElectionData = electionPhases && electionPhases.length > 0;
+        let electionStartSessionIndex = mockData.electionStartSessionIndex;
+        let electionPhasesData = mockData.electionPhases;
+
+        if (hasElectionData) {
+          // Find earliest election phase to determine start session
+          const snapshotPhase = electionPhases.find((p: any) => p.phase === 'Snapshot');
+          if (snapshotPhase) {
+            const snapshotSession = sessions.find(s => s.blockNumber === snapshotPhase.blockNumber);
+            if (snapshotSession) {
+              electionStartSessionIndex = sessions.indexOf(snapshotSession);
+            }
+          }
+
+          // Transform phases into UI format
+          const phases = ['Snapshot', 'Signed', 'SignedValidation', 'Unsigned', 'Export'].map(phaseName => {
+            const phase = electionPhases.find((p: any) => p.phase === phaseName);
+            return {
+              started: phase ? true : false,
+              completed: phase ? true : false,
+              timestamp: phase?.timestamp || null,
+            };
+          });
+
+          electionPhasesData = {
+            snapshot: phases[0],
+            signed: phases[1],
+            unsigned: phases[3],
+            export: phases[4],
+          };
+        }
+
+        // Merge real data with mock data (use mock inflation for now)
         const mergedData: MockEraDetails = {
           eraId: era.eraId,
           sessionStart: era.sessionStart,
@@ -75,9 +111,9 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
           isActive: isActive,
           duration: duration,
           sessionCount: sessionCount,
-          // Keep mocked for now
-          electionStartSessionIndex: mockData.electionStartSessionIndex,
-          electionPhases: mockData.electionPhases,
+          electionStartSessionIndex: electionStartSessionIndex,
+          electionPhases: electionPhasesData,
+          electionPhasesRaw: electionPhases, // Store raw election phase data for Elections tab
           inflation: mockData.inflation,
           validatorCount: mockData.validatorCount,
         };
@@ -183,6 +219,36 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
       </div>
     </div>
   );
+};
+
+// Utility to format token amounts
+const formatTokenAmount = (planckAmount: string, decimals: number = 12): string => {
+  try {
+    const bigIntValue = BigInt(planckAmount);
+    const divisor = BigInt(10 ** decimals);
+    const wholePart = bigIntValue / divisor;
+    const fractionalPart = bigIntValue % divisor;
+
+    // Format with commas
+    const wholeStr = wholePart.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+    // If there's a fractional part, show up to 2 decimal places
+    if (fractionalPart > 0) {
+      const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
+      const roundedFractional = fractionalStr.substring(0, 2);
+      return `${wholeStr}.${roundedFractional}`;
+    }
+
+    return wholeStr;
+  } catch (e) {
+    return '—';
+  }
+};
+
+// Get token name based on chain
+const getTokenName = (): string => {
+  // TODO: Get from status or config, for now hardcoded to KSM
+  return 'KSM';
 };
 
 // Overview Tab Component
@@ -359,34 +425,46 @@ const OverviewTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
             <div className="info-card">
               <div className="info-card-label">Total Minted</div>
               <div className="info-card-value" style={{ fontSize: '18px', color: '#f59e0b' }}>
-                {eraData.inflation.totalMinted}
+                {formatTokenAmount(eraData.inflation.totalMinted)} {getTokenName()}
               </div>
-              <div className="info-card-subvalue">New DOTs created</div>
+              <div className="info-card-subvalue">Validator + Treasury</div>
             </div>
 
             <div className="info-card">
               <div className="info-card-label">Validator Rewards</div>
               <div className="info-card-value" style={{ fontSize: '18px', color: '#10b981' }}>
-                {eraData.inflation.validatorRewards}
+                {formatTokenAmount(eraData.inflation.validatorRewards)} {getTokenName()}
               </div>
               <div className="info-card-subvalue">
-                {eraData.inflation.totalMinted && eraData.inflation.validatorRewards
-                  ? `${Math.round((parseInt(eraData.inflation.validatorRewards.replace(/[^\d]/g, '')) /
-                      parseInt(eraData.inflation.totalMinted.replace(/[^\d]/g, ''))) * 100)}%`
-                  : '—'} of total
+                {(() => {
+                  try {
+                    const total = BigInt(eraData.inflation.totalMinted);
+                    const validators = BigInt(eraData.inflation.validatorRewards);
+                    const percentage = Number((validators * BigInt(10000)) / total) / 100;
+                    return `${percentage.toFixed(1)}% of total`;
+                  } catch (e) {
+                    return '—';
+                  }
+                })()}
               </div>
             </div>
 
             <div className="info-card">
               <div className="info-card-label">Treasury</div>
               <div className="info-card-value" style={{ fontSize: '18px', color: '#3b82f6' }}>
-                {eraData.inflation.treasury}
+                {formatTokenAmount(eraData.inflation.treasury)} {getTokenName()}
               </div>
               <div className="info-card-subvalue">
-                {eraData.inflation.totalMinted && eraData.inflation.treasury
-                  ? `${Math.round((parseInt(eraData.inflation.treasury.replace(/[^\d]/g, '')) /
-                      parseInt(eraData.inflation.totalMinted.replace(/[^\d]/g, ''))) * 100)}%`
-                  : '—'} of total
+                {(() => {
+                  try {
+                    const total = BigInt(eraData.inflation.totalMinted);
+                    const treasury = BigInt(eraData.inflation.treasury);
+                    const percentage = Number((treasury * BigInt(10000)) / total) / 100;
+                    return `${percentage.toFixed(1)}% of total`;
+                  } catch (e) {
+                    return '—';
+                  }
+                })()}
               </div>
             </div>
 
@@ -605,7 +683,8 @@ const EventsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
   };
 
   const getSubscanLink = (eventId: string) => {
-    return `https://kusama.subscan.io/event/${eventId}`;
+    // All events in era details are from Asset Hub (AH)
+    return `https://assethub-kusama.subscan.io/event/${eventId}`;
   };
 
   // Sort events by block number (oldest first)
@@ -753,52 +832,98 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
     return new Date(timestamp).toLocaleString();
   };
 
+  const formatCount = (value: number | null) => {
+    if (value === null || value === undefined) return '—';
+    return value.toLocaleString();
+  };
+
+  // Check if we have real election data
+  const hasRealElectionData = eraData.electionPhasesRaw && eraData.electionPhasesRaw.length > 0;
+
   // Check if election has started
   const electionStarted = eraData.electionPhases.snapshot.started;
 
-  // Election stages based on PhaseTransitioned events
-  const stages = [
-    {
-      id: 1,
-      title: 'Snapshot',
-      icon: '📸',
-      status: eraData.electionPhases.snapshot.completed ? 'completed' : eraData.electionPhases.snapshot.started ? 'active' : 'pending',
-      timestamp: eraData.electionPhases.snapshot.timestamp,
-      eventId: '11501414-6', // Mock - will be from actual event
-      details: eraData.electionPhases.snapshot.started ? [
-        { label: 'Validator Count', value: '1,234 (mocked)' },
-        { label: 'Nominator Count', value: '12,458 (mocked)' },
-        { label: 'Min Nominator Bond', value: '1.5 KSM (mocked)' },
-      ] : [],
-    },
-    {
-      id: 2,
-      title: 'Signed',
-      icon: '✍️',
-      status: eraData.electionPhases.signed.completed ? 'completed' : eraData.electionPhases.signed.started ? 'active' : 'pending',
-      timestamp: eraData.electionPhases.signed.timestamp,
-      eventId: '11501431-1', // Mock - will be from actual event
-      details: [],
-    },
-    {
-      id: 3,
-      title: 'Signed Validation',
-      icon: '✔️',
-      status: eraData.electionPhases.signed.completed ? 'completed' : eraData.electionPhases.signed.started ? 'active' : 'pending',
-      timestamp: eraData.electionPhases.signed.timestamp,
-      eventId: '11501481-1', // Mock - will be from actual event
-      details: [],
-    },
-    {
-      id: 4,
-      title: 'Unsigned',
-      icon: '📝',
-      status: eraData.electionPhases.unsigned.completed ? 'completed' : eraData.electionPhases.unsigned.started ? 'active' : 'pending',
-      timestamp: eraData.electionPhases.unsigned.timestamp,
-      eventId: '11501738-1', // Mock - will be from actual event
-      details: [],
-    },
-  ];
+  // Build stages from real data if available, otherwise use mock structure
+  const stages = hasRealElectionData
+    ? eraData.electionPhasesRaw!.map((phase: any, index: number) => {
+        const getIcon = (phaseName: string) => {
+          switch (phaseName) {
+            case 'Off': return '⭕';
+            case 'Snapshot': return '📸';
+            case 'Signed': return '✍️';
+            case 'SignedValidation': return '✔️';
+            case 'Unsigned': return '📝';
+            case 'Export': return '📤';
+            default: return '📋';
+          }
+        };
+
+        const details: Array<{ label: string; value: string }> = [];
+
+        // Add phase-specific details
+        if (phase.phase === 'Snapshot') {
+          if (phase.validatorCandidates !== null && phase.validatorCandidates !== undefined) {
+            details.push({ label: 'Validator Count', value: formatCount(phase.validatorCandidates) });
+          }
+          if (phase.nominatorCandidates !== null && phase.nominatorCandidates !== undefined) {
+            details.push({ label: 'Nominator Count', value: formatCount(phase.nominatorCandidates) });
+          }
+          // Min Nominator Bond is not yet implemented
+          details.push({ label: 'Min Nominator Bond', value: '— (not tracked)' });
+        }
+
+        return {
+          id: index + 1,
+          title: phase.phase,
+          icon: getIcon(phase.phase),
+          status: 'completed',
+          timestamp: phase.timestamp,
+          eventId: phase.eventId,
+          details,
+        };
+      })
+    : [
+        {
+          id: 1,
+          title: 'Snapshot',
+          icon: '📸',
+          status: eraData.electionPhases.snapshot.completed ? 'completed' : eraData.electionPhases.snapshot.started ? 'active' : 'pending',
+          timestamp: eraData.electionPhases.snapshot.timestamp,
+          eventId: null,
+          details: eraData.electionPhases.snapshot.started ? [
+            { label: 'Validator Count', value: '— (no data)' },
+            { label: 'Nominator Count', value: '— (no data)' },
+            { label: 'Min Nominator Bond', value: '— (no data)' },
+          ] : [],
+        },
+        {
+          id: 2,
+          title: 'Signed',
+          icon: '✍️',
+          status: eraData.electionPhases.signed.completed ? 'completed' : eraData.electionPhases.signed.started ? 'active' : 'pending',
+          timestamp: eraData.electionPhases.signed.timestamp,
+          eventId: null,
+          details: [],
+        },
+        {
+          id: 3,
+          title: 'Signed Validation',
+          icon: '✔️',
+          status: eraData.electionPhases.signed.completed ? 'completed' : eraData.electionPhases.signed.started ? 'active' : 'pending',
+          timestamp: eraData.electionPhases.signed.timestamp,
+          eventId: null,
+          details: [],
+        },
+        {
+          id: 4,
+          title: 'Unsigned',
+          icon: '📝',
+          status: eraData.electionPhases.unsigned.completed ? 'completed' : eraData.electionPhases.unsigned.started ? 'active' : 'pending',
+          timestamp: eraData.electionPhases.unsigned.timestamp,
+          eventId: null,
+          details: [],
+        },
+      ];
 
   const getStatusColor = (status: string) => {
     if (status === 'completed') return '#10b981';
@@ -821,7 +946,11 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
       <div style={{ marginBottom: '30px' }}>
         <h3 style={{ margin: 0, marginBottom: '10px' }}>Election Phases</h3>
         <div style={{ fontSize: '0.9rem', color: '#666' }}>
-          {electionStarted ? `Multi-block election for Era ${eraData.eraId + 1}` : `Waiting for election to start`}
+          {hasRealElectionData
+            ? `Multi-block election for Era ${eraData.eraId + 1}`
+            : electionStarted
+              ? `Multi-block election for Era ${eraData.eraId + 1} (no data available yet)`
+              : `Waiting for election to start`}
         </div>
       </div>
 
@@ -895,20 +1024,24 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
                   {stage.timestamp && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px', color: '#888' }}>
                       <span>{formatTimestamp(stage.timestamp)}</span>
-                      <span style={{ color: '#555' }}>•</span>
-                      <a
-                        href={getSubscanEventLink(stage.eventId)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          color: '#667eea',
-                          textDecoration: 'none',
-                          fontFamily: 'monospace',
-                          fontSize: '11px',
-                        }}
-                      >
-                        View on Subscan ↗
-                      </a>
+                      {stage.eventId && (
+                        <>
+                          <span style={{ color: '#555' }}>•</span>
+                          <a
+                            href={getSubscanEventLink(stage.eventId)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              color: '#667eea',
+                              textDecoration: 'none',
+                              fontFamily: 'monospace',
+                              fontSize: '11px',
+                            }}
+                          >
+                            View on Subscan ↗
+                          </a>
+                        </>
+                      )}
                     </div>
                   )}
                   {!stage.timestamp && (

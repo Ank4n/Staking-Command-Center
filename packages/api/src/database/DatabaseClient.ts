@@ -413,6 +413,52 @@ export class DatabaseClient {
     }));
   }
 
+  // ===== ELECTION PHASES =====
+
+  getElectionPhasesByEra(eraId: number): any[] {
+    const rows = this.db
+      .prepare('SELECT * FROM election_phases WHERE era_id = ? ORDER BY timestamp ASC')
+      .all(eraId) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      eraId: row.era_id,
+      round: row.round,
+      phase: row.phase,
+      blockNumber: row.block_number,
+      eventId: row.event_id,
+      timestamp: row.timestamp,
+      validatorCandidates: row.validator_candidates,
+      nominatorCandidates: row.nominator_candidates,
+      targetValidatorCount: row.target_validator_count,
+      minimumScore: row.minimum_score,
+      sortedScores: row.sorted_scores,
+      queuedSolutionScore: row.queued_solution_score,
+      validatorsElected: row.validators_elected,
+    }));
+  }
+
+  getAllElectionPhases(limit: number = 100): any[] {
+    const rows = this.db
+      .prepare('SELECT * FROM election_phases ORDER BY timestamp DESC LIMIT ?')
+      .all(limit) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      eraId: row.era_id,
+      round: row.round,
+      phase: row.phase,
+      blockNumber: row.block_number,
+      eventId: row.event_id,
+      timestamp: row.timestamp,
+      validatorCandidates: row.validator_candidates,
+      nominatorCandidates: row.nominator_candidates,
+      targetValidatorCount: row.target_validator_count,
+      minimumScore: row.minimum_score,
+      sortedScores: row.sorted_scores,
+      queuedSolutionScore: row.queued_solution_score,
+      validatorsElected: row.validators_elected,
+    }));
+  }
+
   // ===== STATS =====
 
   getStats() {

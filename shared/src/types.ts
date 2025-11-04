@@ -34,6 +34,10 @@ export interface Era {
   sessionEnd: number | null; // Set when next era is created
   startTime: number; // activation_timestamp from event
   endTime?: number | null; // Calculated from session at sessionEnd (for API responses)
+  inflationTotal?: string | null; // Total minted (Planck units) from EraPaid event
+  inflationValidators?: string | null; // Validator payout (Planck units) from EraPaid event
+  inflationTreasury?: string | null; // Treasury remainder (Planck units) from EraPaid event
+  validatorsElected?: number | null; // Number of validators elected for next era
 }
 
 // Warning types (for later)

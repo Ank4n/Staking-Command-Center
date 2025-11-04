@@ -183,6 +183,30 @@ export function createRouter(db: DatabaseClient): Router {
     }
   });
 
+  // ===== ELECTION PHASE ENDPOINTS =====
+
+  // Get election phases for an era
+  router.get('/eras/:eraId/elections', (req, res) => {
+    try {
+      const eraId = parseInt(req.params.eraId);
+      const phases = db.getElectionPhasesByEra(eraId);
+      res.json(phases);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get election phases' });
+    }
+  });
+
+  // Get all election phases
+  router.get('/elections/phases', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const phases = db.getAllElectionPhases(Math.min(limit, 200));
+      res.json(phases);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get election phases' });
+    }
+  });
+
   // ===== EVENT ENDPOINTS =====
 
   // Get recent events from Relay Chain

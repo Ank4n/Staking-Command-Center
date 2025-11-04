@@ -25,6 +25,7 @@ export interface MockEraDetails {
     unsigned: ElectionPhase;
     export: ElectionPhase;
   };
+  electionPhasesRaw?: any[]; // Raw election phase data from database
   // For completed eras only
   inflation?: {
     totalMinted: string; // DOTs minted
@@ -214,20 +215,24 @@ export function generateMockEraData(eraId: number, currentEraId?: number): MockE
   let validatorCount = undefined;
 
   if (!isActive) {
-    // Generate realistic inflation numbers
-    const baseMinted = 15000 + Math.floor(seededRandom() * 5000); // 15k-20k DOTs
+    // Generate realistic inflation numbers in Planck units (1 KSM = 10^12 Planck)
+    // For Kusama: typically 800-900 KSM per era
+    const baseKSM = 800 + Math.floor(seededRandom() * 100); // 800-900 KSM
+    const basePlanck = BigInt(baseKSM) * BigInt(10 ** 12);
+
     const validatorRewardsPct = 0.6 + seededRandom() * 0.1; // 60-70% to validators
-    const validatorRewardsAmount = Math.floor(baseMinted * validatorRewardsPct);
-    const treasuryAmount = baseMinted - validatorRewardsAmount;
+    const validatorRewardsPlanck = (basePlanck * BigInt(Math.floor(validatorRewardsPct * 100))) / BigInt(100);
+    const treasuryPlanck = basePlanck - validatorRewardsPlanck;
 
     inflation = {
-      totalMinted: `${baseMinted.toLocaleString()} DOT`,
-      validatorRewards: `${validatorRewardsAmount.toLocaleString()} DOT`,
-      treasury: `${treasuryAmount.toLocaleString()} DOT`,
+      totalMinted: basePlanck.toString(),
+      validatorRewards: validatorRewardsPlanck.toString(),
+      treasury: treasuryPlanck.toString(),
     };
 
-    // Validator count (typically 297 on Kusama, 300 on Polkadot)
-    validatorCount = 290 + Math.floor(seededRandom() * 10); // 290-299
+    // Validator count (typically ~1000 on Kusama, ~300 on Polkadot)
+    // For Kusama: around 950-1050 validators
+    validatorCount = 950 + Math.floor(seededRandom() * 100); // 950-1050
   }
 
   return {

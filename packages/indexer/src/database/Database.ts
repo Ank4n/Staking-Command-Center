@@ -102,7 +102,11 @@ export class StakingDatabase {
         era_id INTEGER PRIMARY KEY,
         session_start INTEGER NOT NULL,
         session_end INTEGER,
-        start_time INTEGER NOT NULL
+        start_time INTEGER NOT NULL,
+        inflation_total TEXT,
+        inflation_validators TEXT,
+        inflation_treasury TEXT,
+        validators_elected INTEGER
       );
 
       CREATE INDEX IF NOT EXISTS idx_eras_session_start ON eras(session_start);
@@ -125,6 +129,31 @@ export class StakingDatabase {
       CREATE INDEX IF NOT EXISTS idx_warnings_session ON warnings(session_id);
       CREATE INDEX IF NOT EXISTS idx_warnings_timestamp ON warnings(timestamp);
       CREATE INDEX IF NOT EXISTS idx_warnings_severity ON warnings(severity);
+
+      -- Election phases table (for tracking multi-block election progress)
+      CREATE TABLE IF NOT EXISTS election_phases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        era_id INTEGER NOT NULL,
+        round INTEGER NOT NULL,
+        phase TEXT NOT NULL,
+        block_number INTEGER NOT NULL,
+        event_id TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        validator_candidates INTEGER,
+        nominator_candidates INTEGER,
+        target_validator_count INTEGER,
+        minimum_score TEXT,
+        sorted_scores TEXT,
+        queued_solution_score TEXT,
+        validators_elected INTEGER,
+        FOREIGN KEY (era_id) REFERENCES eras(era_id) ON DELETE CASCADE,
+        FOREIGN KEY (block_number) REFERENCES blocks_ah(block_number) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_election_phases_era ON election_phases(era_id);
+      CREATE INDEX IF NOT EXISTS idx_election_phases_round ON election_phases(round);
+      CREATE INDEX IF NOT EXISTS idx_election_phases_phase ON election_phases(phase);
+      CREATE INDEX IF NOT EXISTS idx_election_phases_block ON election_phases(block_number);
 
       -- Indexer state table (for tracking sync progress)
       CREATE TABLE IF NOT EXISTS indexer_state (
@@ -383,15 +412,48 @@ export class StakingDatabase {
 
   upsertEra(era: Era): void {
     const stmt = this.db.prepare(`
-      INSERT INTO eras (era_id, session_start, session_end, start_time)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO eras (era_id, session_start, session_end, start_time, inflation_total, inflation_validators, inflation_treasury, validators_elected)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(era_id) DO UPDATE SET
         session_start = excluded.session_start,
         session_end = COALESCE(excluded.session_end, session_end),
-        start_time = excluded.start_time
+        start_time = excluded.start_time,
+        inflation_total = COALESCE(excluded.inflation_total, inflation_total),
+        inflation_validators = COALESCE(excluded.inflation_validators, inflation_validators),
+        inflation_treasury = COALESCE(excluded.inflation_treasury, inflation_treasury),
+        validators_elected = COALESCE(excluded.validators_elected, validators_elected)
     `);
 
-    stmt.run(era.eraId, era.sessionStart, era.sessionEnd, era.startTime);
+    stmt.run(
+      era.eraId,
+      era.sessionStart,
+      era.sessionEnd,
+      era.startTime,
+      (era as any).inflationTotal || null,
+      (era as any).inflationValidators || null,
+      (era as any).inflationTreasury || null,
+      (era as any).validatorsElected || null
+    );
+  }
+
+  updateEraInflation(eraId: number, inflationTotal: string, inflationValidators: string, inflationTreasury: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE eras
+      SET inflation_total = ?, inflation_validators = ?, inflation_treasury = ?
+      WHERE era_id = ?
+    `);
+
+    stmt.run(inflationTotal, inflationValidators, inflationTreasury, eraId);
+  }
+
+  updateEraValidatorCount(eraId: number, validatorsElected: number): void {
+    const stmt = this.db.prepare(`
+      UPDATE eras
+      SET validators_elected = ?
+      WHERE era_id = ?
+    `);
+
+    stmt.run(validatorsElected, eraId);
   }
 
   getEra(eraId: number): Era | null {
@@ -535,6 +597,131 @@ export class StakingDatabase {
     transaction(Object.entries(states));
   }
 
+  // ===== ELECTION PHASE METHODS =====
+
+  insertElectionPhase(phase: {
+    eraId: number;
+    round: number;
+    phase: string;
+    blockNumber: number;
+    eventId: string;
+    timestamp: number;
+    validatorCandidates?: number | null;
+    nominatorCandidates?: number | null;
+    targetValidatorCount?: number | null;
+    minimumScore?: string | null;
+    sortedScores?: string | null;
+    queuedSolutionScore?: string | null;
+    validatorsElected?: number | null;
+  }): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO election_phases (
+        era_id, round, phase, block_number, event_id, timestamp,
+        validator_candidates, nominator_candidates, target_validator_count,
+        minimum_score, sorted_scores, queued_solution_score, validators_elected
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      phase.eraId,
+      phase.round,
+      phase.phase,
+      phase.blockNumber,
+      phase.eventId,
+      phase.timestamp,
+      phase.validatorCandidates || null,
+      phase.nominatorCandidates || null,
+      phase.targetValidatorCount || null,
+      phase.minimumScore || null,
+      phase.sortedScores || null,
+      phase.queuedSolutionScore || null,
+      phase.validatorsElected || null
+    );
+
+    return result.lastInsertRowid as number;
+  }
+
+  getElectionPhasesByEra(eraId: number): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM election_phases
+      WHERE era_id = ?
+      ORDER BY timestamp ASC
+    `);
+
+    const rows = stmt.all(eraId) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      eraId: row.era_id,
+      round: row.round,
+      phase: row.phase,
+      blockNumber: row.block_number,
+      eventId: row.event_id,
+      timestamp: row.timestamp,
+      validatorCandidates: row.validator_candidates,
+      nominatorCandidates: row.nominator_candidates,
+      targetValidatorCount: row.target_validator_count,
+      minimumScore: row.minimum_score,
+      sortedScores: row.sorted_scores,
+      queuedSolutionScore: row.queued_solution_score,
+      validatorsElected: row.validators_elected,
+    }));
+  }
+
+  getLatestElectionPhaseByRound(round: number): any | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM election_phases
+      WHERE round = ?
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `);
+
+    const row = stmt.get(round) as any;
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      eraId: row.era_id,
+      round: row.round,
+      phase: row.phase,
+      blockNumber: row.block_number,
+      eventId: row.event_id,
+      timestamp: row.timestamp,
+      validatorCandidates: row.validator_candidates,
+      nominatorCandidates: row.nominator_candidates,
+      targetValidatorCount: row.target_validator_count,
+      minimumScore: row.minimum_score,
+      sortedScores: row.sorted_scores,
+      queuedSolutionScore: row.queued_solution_score,
+      validatorsElected: row.validators_elected,
+    };
+  }
+
+  getAllElectionPhases(limit: number = 100): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM election_phases
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(limit) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      eraId: row.era_id,
+      round: row.round,
+      phase: row.phase,
+      blockNumber: row.block_number,
+      eventId: row.event_id,
+      timestamp: row.timestamp,
+      validatorCandidates: row.validator_candidates,
+      nominatorCandidates: row.nominator_candidates,
+      targetValidatorCount: row.target_validator_count,
+      minimumScore: row.minimum_score,
+      sortedScores: row.sorted_scores,
+      queuedSolutionScore: row.queued_solution_score,
+      validatorsElected: row.validators_elected,
+    }));
+  }
+
   // ===== MAINTENANCE METHODS =====
 
   /**
@@ -569,6 +756,7 @@ export class StakingDatabase {
     const eraCount = this.db.prepare('SELECT COUNT(*) as count FROM eras').get() as { count: number };
     const sessionCount = this.db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
     const warningCount = this.db.prepare('SELECT COUNT(*) as count FROM warnings').get() as { count: number };
+    const electionPhasesCount = this.db.prepare('SELECT COUNT(*) as count FROM election_phases').get() as { count: number };
 
     return {
       blocksRC: blocksRCCount.count,
@@ -578,6 +766,7 @@ export class StakingDatabase {
       eras: eraCount.count,
       sessions: sessionCount.count,
       warnings: warningCount.count,
+      electionPhases: electionPhasesCount.count,
     };
   }
 

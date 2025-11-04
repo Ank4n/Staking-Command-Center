@@ -285,3 +285,9 @@ export async function fetchTableData(tableName: string, limit: number = 100): Pr
   if (!response.ok) throw new Error('Failed to fetch table data');
   return response.json();
 }
+
+export async function fetchElectionPhasesByEra(eraId: number): Promise<any[]> {
+  const response = await fetch(`${API_BASE_URL}/api/eras/${eraId}/elections`);
+  if (!response.ok) throw new Error('Failed to fetch election phases');
+  return response.json();
+}
