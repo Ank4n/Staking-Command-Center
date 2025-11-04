@@ -183,6 +183,10 @@ export class DatabaseClient {
       sessionEnd: row.session_end,
       startTime: row.start_time,
       endTime: this.getEraEndTime(row.session_end),
+      inflationTotal: row.inflation_total,
+      inflationValidators: row.inflation_validators,
+      inflationTreasury: row.inflation_treasury,
+      validatorsElected: row.validators_elected,
     }));
   }
 
@@ -199,6 +203,10 @@ export class DatabaseClient {
       sessionEnd: row.session_end,
       startTime: row.start_time,
       endTime: this.getEraEndTime(row.session_end),
+      inflationTotal: row.inflation_total,
+      inflationValidators: row.inflation_validators,
+      inflationTreasury: row.inflation_treasury,
+      validatorsElected: row.validators_elected,
     };
 
     const sessionRows = this.db
@@ -404,6 +412,28 @@ export class DatabaseClient {
     const rows = this.db
       .prepare('SELECT * FROM events_ah WHERE block_number = ? ORDER BY id')
       .all(blockNumber) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      blockNumber: row.block_number,
+      eventId: row.event_id,
+      eventType: row.event_type,
+      data: row.data,
+    }));
+  }
+
+  getEventsByEraAH(eraId: number): BlockchainEvent[] {
+    // Get sessions for this era to determine block range
+    const sessions = this.getSessionsByEra(eraId);
+    if (sessions.length === 0) {
+      return [];
+    }
+
+    const startBlock = Math.min(...sessions.map(s => s.blockNumber));
+    const endBlock = Math.max(...sessions.map(s => s.blockNumber));
+
+    const rows = this.db
+      .prepare('SELECT * FROM events_ah WHERE block_number >= ? AND block_number <= ? ORDER BY block_number DESC, id DESC')
+      .all(startBlock, endBlock) as any[];
     return rows.map(row => ({
       id: row.id,
       blockNumber: row.block_number,

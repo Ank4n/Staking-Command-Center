@@ -256,8 +256,40 @@ async function reimportBlock(chain: 'rc' | 'ah', blockNumber: number) {
           logger.info({ eventType, blockNumber }, 'Processing PhaseTransitioned event');
 
           try {
-            const fromPhase = event.data.from?.toString() || '';
-            const toPhase = event.data.to?.toString() || '';
+            // Extract phase names properly (handle enum variants with associated data)
+            const extractPhaseName = (phaseData: any): string => {
+              if (!phaseData) return '';
+
+              // If it's an enum type, check for .type property
+              if (phaseData.type) {
+                return phaseData.type;
+              }
+
+              // If it's already a string, use it
+              if (typeof phaseData === 'string') {
+                return phaseData;
+              }
+
+              // If toString gives us JSON like {"export":14}, extract the key
+              const str = phaseData.toString();
+              if (str.startsWith('{')) {
+                try {
+                  const parsed = JSON.parse(str);
+                  const keys = Object.keys(parsed);
+                  if (keys.length > 0) {
+                    // Capitalize first letter
+                    return keys[0].charAt(0).toUpperCase() + keys[0].slice(1);
+                  }
+                } catch (e) {
+                  // Fall through
+                }
+              }
+
+              return str;
+            };
+
+            const fromPhase = extractPhaseName(event.data.from);
+            const toPhase = extractPhaseName(event.data.to);
 
             logger.info({ fromPhase, toPhase, blockNumber }, 'Phase transition detected');
 
@@ -265,9 +297,14 @@ async function reimportBlock(chain: 'rc' | 'ah', blockNumber: number) {
             const round = await apiAt.query.multiBlockElection?.round?.();
             const roundNumber = round && typeof round.toNumber === 'function' ? round.toNumber() : 0;
 
-            // Query current era for era_id
-            const currentEra = await apiAt.query.staking?.currentEra?.();
-            const eraId = currentEra && typeof currentEra.toJSON === 'function' ? currentEra.toJSON() : null;
+            // Query active era for era_id (the era during which this phase is occurring, not the era being elected for)
+            const activeEraOption = await apiAt.query.staking?.activeEra?.();
+            let eraId: number | null = null;
+
+            if (activeEraOption && !activeEraOption.isEmpty) {
+              const activeEra = (activeEraOption as any).toJSON();
+              eraId = activeEra?.index || null;
+            }
 
             if (!eraId) {
               logger.warn({ blockNumber }, 'Could not get era_id for election phase');

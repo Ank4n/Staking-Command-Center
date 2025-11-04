@@ -588,6 +588,11 @@ export class Indexer {
     if (eventType.toLowerCase() === 'stakingrcclient.sessionreportreceived') {
       await this.handleSessionReportReceived(event, blockNumber, blockTimestamp);
     }
+
+    // Look for multiBlockElection.PhaseTransitioned event
+    if (eventType.toLowerCase() === 'multiblockelection.phasetransitioned') {
+      await this.handlePhaseTransitioned(event, blockNumber, blockTimestamp);
+    }
   }
 
   /**
@@ -756,6 +761,184 @@ export class Indexer {
 
     } catch (error) {
       this.logger.error({ error, blockNumber, eventType: 'SessionReportReceived' }, 'Error handling SessionReportReceived');
+    }
+  }
+
+  /**
+   * Handle PhaseTransitioned event to track election phases
+   */
+  private async handlePhaseTransitioned(event: any, blockNumber: number, blockTimestamp: number): Promise<void> {
+    this.logger.info({ blockNumber }, 'Processing PhaseTransitioned event');
+
+    try {
+      // Get phase transition info
+      // Extract phase names properly (handle enum variants with associated data)
+      const extractPhaseName = (phaseData: any): string => {
+        if (!phaseData) return '';
+
+        // If it's an enum type, check for .type property
+        if (phaseData.type) {
+          return phaseData.type;
+        }
+
+        // If it's already a string, use it
+        if (typeof phaseData === 'string') {
+          return phaseData;
+        }
+
+        // If toString gives us JSON like {"export":14}, extract the key
+        const str = phaseData.toString();
+        if (str.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(str);
+            const keys = Object.keys(parsed);
+            if (keys.length > 0) {
+              // Capitalize first letter
+              return keys[0].charAt(0).toUpperCase() + keys[0].slice(1);
+            }
+          } catch (e) {
+            // Fall through
+          }
+        }
+
+        return str;
+      };
+
+      const fromPhase = extractPhaseName(event.data.from);
+      const toPhase = extractPhaseName(event.data.to);
+
+      this.logger.info({ fromPhase, toPhase, blockNumber }, 'Phase transition detected');
+
+      // Create API instance at this block
+      const blockHash = await this.apiAH.rpc.chain.getBlockHash(blockNumber);
+      const apiAt = await this.apiAH.at(blockHash);
+
+      // Query round number
+      const round = await apiAt.query.multiBlockElection?.round?.();
+      const roundNumber = round && typeof round.toNumber === 'function' ? round.toNumber() : 0;
+
+      // Query active era for era_id (the era during which this phase is occurring, not the era being elected for)
+      const activeEraOption = await apiAt.query.staking?.activeEra?.();
+      let eraId: number | null = null;
+
+      if (activeEraOption && !activeEraOption.isEmpty) {
+        const activeEra = (activeEraOption as any).toJSON();
+        eraId = activeEra?.index || null;
+      }
+
+      if (!eraId) {
+        this.logger.warn({ blockNumber }, 'Could not get era_id for election phase');
+        return;
+      }
+
+      // Create event_id for Subscan linking
+      const eventsCodec = await apiAt.query.system.events();
+      const events = eventsCodec as unknown as EventRecord[];
+      let eventIndex = 0;
+      for (let i = 0; i < events.length; i++) {
+        const record = events[i];
+        const evt = record.event;
+        const evtType = `${evt.section}.${evt.method}`;
+        if (evtType.toLowerCase() === 'multiblockelection.phasetransitioned') {
+          eventIndex = i;
+          break;
+        }
+      }
+      const eventId = `${blockNumber}-${eventIndex}`;
+
+      let phaseData: any = {
+        eraId,
+        round: roundNumber,
+        phase: toPhase,
+        blockNumber,
+        eventId,
+        timestamp: blockTimestamp,
+      };
+
+      // Query phase-specific data
+      if (toPhase === 'Snapshot') {
+        // Query validator and nominator counts
+        const validatorCount = await apiAt.query.staking?.counterForValidators?.();
+        const nominatorCount = await apiAt.query.staking?.counterForNominators?.();
+        const targetValidatorCount = await apiAt.query.staking?.validatorCount?.();
+
+        phaseData.validatorCandidates = validatorCount && typeof validatorCount.toNumber === 'function' ? validatorCount.toNumber() : null;
+        phaseData.nominatorCandidates = nominatorCount && typeof nominatorCount.toNumber === 'function' ? nominatorCount.toNumber() : null;
+        phaseData.targetValidatorCount = targetValidatorCount && typeof targetValidatorCount.toNumber === 'function' ? targetValidatorCount.toNumber() : null;
+
+        this.logger.info({
+          validatorCandidates: phaseData.validatorCandidates,
+          nominatorCandidates: phaseData.nominatorCandidates,
+          targetValidatorCount: phaseData.targetValidatorCount
+        }, 'Snapshot phase data');
+      }
+
+      if (toPhase === 'Signed') {
+        // Query sorted scores and minimum score
+        const sortedScoresCodec = await apiAt.query.multiBlockElectionSigned?.sortedScores?.(roundNumber);
+        const minimumScoreCodec = await apiAt.query.multiBlockElectionVerifier?.minimumScore?.();
+
+        if (sortedScoresCodec) {
+          const sortedScores = sortedScoresCodec.toJSON();
+          // Get top 5 scores
+          const top5 = Array.isArray(sortedScores) ? sortedScores.slice(0, 5) : [];
+          phaseData.sortedScores = JSON.stringify(top5);
+        }
+
+        if (minimumScoreCodec && !minimumScoreCodec.isEmpty) {
+          phaseData.minimumScore = minimumScoreCodec.toString();
+        }
+
+        this.logger.info({ sortedScores: phaseData.sortedScores, minimumScore: phaseData.minimumScore }, 'Signed phase data');
+      }
+
+      if (toPhase === 'SignedValidation') {
+        // Query queued solution score
+        const queuedScoreCodec = await apiAt.query.multiBlockElectionVerifier?.queuedSolutionScore?.(roundNumber);
+
+        if (queuedScoreCodec && !queuedScoreCodec.isEmpty) {
+          phaseData.queuedSolutionScore = queuedScoreCodec.toString();
+        }
+
+        this.logger.info({ queuedSolutionScore: phaseData.queuedSolutionScore }, 'SignedValidation phase data');
+      }
+
+      if (toPhase === 'Off' && fromPhase === 'Export') {
+        // Query elected validators at block n-1
+        const queryBlockNumber = Math.max(1, blockNumber - 1);
+        const queryBlockHash = await this.apiAH.rpc.chain.getBlockHash(queryBlockNumber);
+        const apiAtQuery = await this.apiAH.at(queryBlockHash);
+
+        const electableStashes = await apiAtQuery.query.staking?.electableStashes?.();
+
+        if (electableStashes) {
+          const stashesList = electableStashes.toJSON();
+          phaseData.validatorsElected = Array.isArray(stashesList) ? stashesList.length : 0;
+
+          // Also update the era table
+          this.db.updateEraValidatorCount(eraId, phaseData.validatorsElected);
+        }
+
+        this.logger.info({ validatorsElected: phaseData.validatorsElected }, 'Export→Off transition data');
+      }
+
+      // Check if era exists before inserting (to avoid foreign key constraint)
+      const existingEra = this.db.getEra(eraId);
+      if (!existingEra) {
+        this.logger.warn({
+          eraId,
+          phase: toPhase,
+          blockNumber,
+          message: 'Era does not exist yet, skipping election phase insert. Will be populated when era is created.'
+        }, 'Skipping election phase - era not found');
+      } else {
+        // Insert election phase
+        this.db.insertElectionPhase(phaseData);
+        this.logger.info({ phase: toPhase, eraId, round: roundNumber }, 'Inserted election phase');
+      }
+
+    } catch (error) {
+      this.logger.error({ error, blockNumber, eventType: 'PhaseTransitioned' }, 'Error handling PhaseTransitioned');
     }
   }
 

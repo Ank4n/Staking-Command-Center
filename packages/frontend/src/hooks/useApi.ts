@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type { ApiStatus, Era, Warning, Block, BlockchainEvent, Session } from '@staking-cc/shared';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+// Use empty string to make relative URLs (leverages Vite proxy in dev mode)
+// In production, set VITE_API_URL environment variable to the full API URL
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 export function useWebSocket() {
   const [socket, setSocket] = useState<Socket | null>(null);

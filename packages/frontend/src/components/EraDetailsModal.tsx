@@ -10,7 +10,8 @@ interface EraDetailsModalProps {
 
 type TabType = 'overview' | 'sessions' | 'events' | 'warnings' | 'elections' | 'rewards' | 'config';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+// Use empty string to make relative URLs (leverages Vite proxy in dev mode)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose }) => {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -31,7 +32,7 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
           fetch(`${API_BASE_URL}/api/eras/${eraId}`),
           fetch(`${API_BASE_URL}/api/eras/${eraId}/sessions`),
           fetch(`${API_BASE_URL}/api/eras/${eraId}/warnings`),
-          fetch(`${API_BASE_URL}/api/events/ah?limit=100`),
+          fetch(`${API_BASE_URL}/api/eras/${eraId}/events/ah`),
           fetchElectionPhasesByEra(eraId),
         ]);
 
@@ -42,11 +43,23 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
         const warnings: Warning[] = warningsRes.ok ? await warningsRes.json() : [];
         const allEvents: BlockchainEvent[] = eventsRes.ok ? await eventsRes.json() : [];
 
-        // Filter events for this era (by block range from era start to end)
-        // Get block range from first and last sessions
-        const startBlock = sessions.length > 0 ? Math.min(...sessions.map(s => s.blockNumber)) : 0;
-        const endBlock = sessions.length > 0 ? Math.max(...sessions.map(s => s.blockNumber)) : Number.MAX_SAFE_INTEGER;
-        const eraEvents = allEvents.filter(e => e.blockNumber >= startBlock && e.blockNumber <= endBlock);
+        // Filter events to show only important event types (from CLAUDE.md Events Tracking section)
+        const importantEventPrefixes = [
+          'staking.',
+          'stakingRcClient.',
+          'multiBlockElection.',
+          'multiBlockElectionSigned.',
+          'multiBlockElectionVerifier.',
+          'session.NewQueued',
+          'session.NewSession',
+        ];
+
+        const isImportantEvent = (eventType: string) => {
+          const lowerType = eventType.toLowerCase();
+          return importantEventPrefixes.some(prefix => lowerType.startsWith(prefix.toLowerCase()));
+        };
+
+        const eraEvents = allEvents.filter(e => isImportantEvent(e.eventType));
 
         // Calculate derived data
         const isActive = era.sessionEnd === null;
@@ -98,7 +111,19 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
           };
         }
 
-        // Merge real data with mock data (use mock inflation for now)
+        // Use real inflation data if available, otherwise fallback to mock
+        const hasRealInflation = era.inflationTotal !== null && era.inflationTotal !== undefined;
+        const inflation = hasRealInflation ? {
+          totalMinted: era.inflationTotal!,
+          validatorRewards: era.inflationValidators!,
+          treasury: era.inflationTreasury!,
+        } : mockData.inflation;
+
+        const validatorCount = era.validatorsElected !== null && era.validatorsElected !== undefined
+          ? era.validatorsElected
+          : mockData.validatorCount;
+
+        // Merge real data with mock data
         const mergedData: MockEraDetails = {
           eraId: era.eraId,
           sessionStart: era.sessionStart,
@@ -114,8 +139,8 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
           electionStartSessionIndex: electionStartSessionIndex,
           electionPhases: electionPhasesData,
           electionPhasesRaw: electionPhases, // Store raw election phase data for Elections tab
-          inflation: mockData.inflation,
-          validatorCount: mockData.validatorCount,
+          inflation: inflation,
+          validatorCount: validatorCount,
         };
 
         setEraData(mergedData);
@@ -853,6 +878,7 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
             case 'Signed': return '✍️';
             case 'SignedValidation': return '✔️';
             case 'Unsigned': return '📝';
+            case 'Done': return '✅';
             case 'Export': return '📤';
             default: return '📋';
           }

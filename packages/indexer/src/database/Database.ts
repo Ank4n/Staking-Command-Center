@@ -464,6 +464,10 @@ export class StakingDatabase {
       sessionStart: row.session_start,
       sessionEnd: row.session_end,
       startTime: row.start_time,
+      inflationTotal: row.inflation_total,
+      inflationValidators: row.inflation_validators,
+      inflationTreasury: row.inflation_treasury,
+      validatorsElected: row.validators_elected,
     } : null;
   }
 
@@ -475,6 +479,10 @@ export class StakingDatabase {
       sessionStart: row.session_start,
       sessionEnd: row.session_end,
       startTime: row.start_time,
+      inflationTotal: row.inflation_total,
+      inflationValidators: row.inflation_validators,
+      inflationTreasury: row.inflation_treasury,
+      validatorsElected: row.validators_elected,
     } : null;
   }
 
@@ -486,6 +494,10 @@ export class StakingDatabase {
       sessionStart: row.session_start,
       sessionEnd: row.session_end,
       startTime: row.start_time,
+      inflationTotal: row.inflation_total,
+      inflationValidators: row.inflation_validators,
+      inflationTreasury: row.inflation_treasury,
+      validatorsElected: row.validators_elected,
     }));
   }
 

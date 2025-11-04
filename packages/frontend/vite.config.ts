@@ -10,15 +10,21 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0', // Listen on all interfaces for Cloudflare Tunnel
     port: 3000,
+    allowedHosts: [
+      '.trycloudflare.com', // Allow all Cloudflare tunnel domains
+    ],
     proxy: {
       '/api': {
-        target: 'http://localhost:4000',
+        target: 'http://127.0.0.1:4000',
         changeOrigin: true,
+        secure: false,
       },
       '/socket.io': {
-        target: 'http://localhost:4000',
+        target: 'http://127.0.0.1:4000',
         ws: true,
+        changeOrigin: true,
       },
     },
   },

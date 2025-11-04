@@ -143,6 +143,17 @@ export function createRouter(db: DatabaseClient): Router {
     }
   });
 
+  // Get events by era
+  router.get('/eras/:eraId/events/ah', (req, res) => {
+    try {
+      const eraId = parseInt(req.params.eraId);
+      const events = db.getEventsByEraAH(eraId);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get era events' });
+    }
+  });
+
   // Get sessions by era
   router.get('/eras/:eraId/sessions', (req, res) => {
     try {
