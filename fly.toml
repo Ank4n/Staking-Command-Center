@@ -1,0 +1,47 @@
+# Fly.io configuration for Staking Command Center - Polkadot
+
+app = "staking-polkadot"
+
+primary_region = "iad"  # Choose closest region: iad (US East), lhr (London), sin (Singapore), syd (Sydney)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  CHAIN = "polkadot"
+  DB_PATH = "/data/staking-polkadot.db"
+  MAX_ERAS = "100"
+  SYNC_BLOCKS = "4000"
+  LOG_LEVEL = "info"
+  API_PORT = "4000"
+  API_HOST = "0.0.0.0"
+
+[mounts]
+  source = "staking_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 4000
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  # Health check endpoint
+  [[services.http_checks]]
+    interval = 30000
+    timeout = 5000
+    grace_period = "10s"
+    method = "get"
+    path = "/api/health"
+
+# Resource configuration
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512  # Increase to 1024 if needed

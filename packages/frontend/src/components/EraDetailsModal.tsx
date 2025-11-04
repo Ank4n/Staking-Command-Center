@@ -230,11 +230,11 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
             </div>
           ) : eraData ? (
             <>
-              {activeTab === 'overview' && <OverviewTab eraData={eraData} />}
+              {activeTab === 'overview' && <OverviewTab eraData={eraData} chain={status?.chain || 'unknown'} />}
               {activeTab === 'sessions' && <SessionsTab eraData={eraData} />}
-              {activeTab === 'events' && <EventsTab eraData={eraData} />}
+              {activeTab === 'events' && <EventsTab eraData={eraData} chain={status?.chain || 'unknown'} />}
               {activeTab === 'warnings' && <WarningsTab eraData={eraData} />}
-              {activeTab === 'elections' && <ElectionsTab eraData={eraData} />}
+              {activeTab === 'elections' && <ElectionsTab eraData={eraData} chain={status?.chain || 'unknown'} />}
               {activeTab === 'rewards' && <ComingSoonTab icon="💰" title="Rewards & Payouts" description="View inflation amounts, claimed/unclaimed rewards, and reward distribution" />}
             </>
           ) : (
@@ -271,13 +271,27 @@ const formatTokenAmount = (planckAmount: string, decimals: number = 12): string 
 };
 
 // Get token name based on chain
-const getTokenName = (): string => {
-  // TODO: Get from status or config, for now hardcoded to KSM
-  return 'KSM';
+const getTokenName = (chain: string): string => {
+  switch (chain.toLowerCase()) {
+    case 'polkadot': return 'DOT';
+    case 'kusama': return 'KSM';
+    case 'westend': return 'WND';
+    default: return 'TOKENS';
+  }
+};
+
+// Get Subscan base URL for Asset Hub based on chain
+const getAssetHubSubscanUrl = (chain: string): string => {
+  switch (chain.toLowerCase()) {
+    case 'polkadot': return 'https://assethub-polkadot.subscan.io';
+    case 'kusama': return 'https://assethub-kusama.subscan.io';
+    case 'westend': return 'https://assethub-westend.subscan.io';
+    default: return 'https://subscan.io';
+  }
 };
 
 // Overview Tab Component
-const OverviewTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
+const OverviewTab: React.FC<{ eraData: MockEraDetails; chain: string }> = ({ eraData, chain }) => {
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return '—';
     return new Date(timestamp).toLocaleString();
@@ -450,7 +464,7 @@ const OverviewTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
             <div className="info-card">
               <div className="info-card-label">Total Minted</div>
               <div className="info-card-value" style={{ fontSize: '18px', color: '#f59e0b' }}>
-                {formatTokenAmount(eraData.inflation.totalMinted)} {getTokenName()}
+                {formatTokenAmount(eraData.inflation.totalMinted)} {getTokenName(chain)}
               </div>
               <div className="info-card-subvalue">Validator + Treasury</div>
             </div>
@@ -458,7 +472,7 @@ const OverviewTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
             <div className="info-card">
               <div className="info-card-label">Validator Rewards</div>
               <div className="info-card-value" style={{ fontSize: '18px', color: '#10b981' }}>
-                {formatTokenAmount(eraData.inflation.validatorRewards)} {getTokenName()}
+                {formatTokenAmount(eraData.inflation.validatorRewards)} {getTokenName(chain)}
               </div>
               <div className="info-card-subvalue">
                 {(() => {
@@ -477,7 +491,7 @@ const OverviewTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
             <div className="info-card">
               <div className="info-card-label">Treasury</div>
               <div className="info-card-value" style={{ fontSize: '18px', color: '#3b82f6' }}>
-                {formatTokenAmount(eraData.inflation.treasury)} {getTokenName()}
+                {formatTokenAmount(eraData.inflation.treasury)} {getTokenName(chain)}
               </div>
               <div className="info-card-subvalue">
                 {(() => {
@@ -698,7 +712,7 @@ const SessionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
 };
 
 // Events Tab Component
-const EventsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
+const EventsTab: React.FC<{ eraData: MockEraDetails; chain: string }> = ({ eraData, chain }) => {
   const getEventColor = (eventType: string) => {
     if (eventType.includes('SessionReportReceived')) return '#667eea';
     if (eventType.includes('EraPaid')) return '#10b981';
@@ -709,7 +723,7 @@ const EventsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
 
   const getSubscanLink = (eventId: string) => {
     // All events in era details are from Asset Hub (AH)
-    return `https://assethub-kusama.subscan.io/event/${eventId}`;
+    return `${getAssetHubSubscanUrl(chain)}/event/${eventId}`;
   };
 
   // Sort events by block number (oldest first)
@@ -851,7 +865,7 @@ const WarningsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
 };
 
 // Elections Tab Component
-const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
+const ElectionsTab: React.FC<{ eraData: MockEraDetails; chain: string }> = ({ eraData, chain }) => {
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return '—';
     return new Date(timestamp).toLocaleString();
@@ -957,14 +971,8 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
     return '#555';
   };
 
-  const getStatusIcon = (status: string) => {
-    if (status === 'completed') return '✓';
-    if (status === 'active') return '⏳';
-    return '○';
-  };
-
   const getSubscanEventLink = (eventId: string) => {
-    return `https://assethub-kusama.subscan.io/event/${eventId}`;
+    return `${getAssetHubSubscanUrl(chain)}/event/${eventId}`;
   };
 
   return (
@@ -993,7 +1001,7 @@ const ElectionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
           borderRadius: '2px',
         }} />
 
-        {stages.map((stage, index) => (
+        {stages.map((stage) => (
           <div key={stage.id} style={{ position: 'relative', marginBottom: '30px' }}>
             {/* Timeline dot/icon */}
             <div style={{

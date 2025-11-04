@@ -45,11 +45,15 @@ COPY --from=builder /app/packages/frontend/dist ./packages/frontend/dist
 # Copy config
 COPY config ./config
 
+# Copy startup script
+COPY start.sh ./start.sh
+RUN chmod +x start.sh
+
 # Create data directory
 RUN mkdir -p /app/data
 
-# Expose API port
+# Expose API port (serves both API and frontend)
 EXPOSE 4000
 
-# Default command (can be overridden in docker-compose)
-CMD ["node", "packages/indexer/dist/index.js"]
+# Start both indexer and API server
+CMD ["./start.sh"]

@@ -1,0 +1,96 @@
+# Node modules
+node_modules
+**/node_modules
+npm-debug.log
+yarn-error.log
+
+# Build outputs (will be rebuilt in Docker)
+dist
+**/dist
+.turbo
+**/.turbo
+build
+**/build
+
+# Development files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+**/*.log
+
+# Database files
+data
+*.db
+*.db-shm
+*.db-wal
+
+# Git
+.git
+.gitignore
+.github
+
+# IDE & AI Tools
+.vscode
+.idea
+.claude
+*.swp
+*.swo
+*.swn
+
+# Testing
+coverage
+.nyc_output
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+CLAUDE.md
+FIXES_APPLIED.md
+REIMPORT_READY.md
+MOCKED_DATA_AUDIT.md
+DEPLOYMENT.md
+
+# Scripts (not needed in production)
+scripts/reimport-*.ts
+scripts/reimport-*.sh
+scripts/clean-*.sql
+
+# Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Fly.io
+fly.toml.example
+.fly
+
+# Additional development files
+*.md
+!README.md
+.editorconfig
+.prettierrc*
+.eslintrc*
+jest.config.*
+tsconfig.*.json
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+__tests__
+**/__tests__
+test
+**/test
+
+# Temporary files
+*.tmp
+*.temp
+.cache
+tmp
+temp

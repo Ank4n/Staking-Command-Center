@@ -92,21 +92,37 @@ async function main() {
     const apiRouter = createRouter(db);
     app.use('/api', apiRouter);
 
-    // Root endpoint
-    app.get('/', (req, res) => {
-      res.json({
-        name: 'Staking Command Center API',
-        version: '0.1.0',
-        chain: process.env.CHAIN || 'unknown',
-        endpoints: {
-          health: '/api/health',
-          status: '/api/status',
-          eras: '/api/eras',
-          warnings: '/api/warnings',
-          docs: 'See README.md for full API documentation',
-        },
+    // Serve frontend static files (production mode)
+    const frontendPath = path.join(__dirname, '../../frontend/dist');
+    if (fs.existsSync(frontendPath)) {
+      logger.info({ frontendPath }, 'Serving frontend static files');
+
+      // Serve static files
+      app.use(express.static(frontendPath));
+
+      // SPA fallback - serve index.html for all non-API routes
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(frontendPath, 'index.html'));
       });
-    });
+    } else {
+      logger.info('Frontend dist folder not found, API-only mode');
+
+      // Root endpoint (API-only mode)
+      app.get('/', (req, res) => {
+        res.json({
+          name: 'Staking Command Center API',
+          version: '0.1.0',
+          chain: process.env.CHAIN || 'unknown',
+          endpoints: {
+            health: '/api/health',
+            status: '/api/status',
+            eras: '/api/eras',
+            warnings: '/api/warnings',
+            docs: 'See README.md for full API documentation',
+          },
+        });
+      });
+    }
 
     // Create HTTP server
     const httpServer = createServer(app);

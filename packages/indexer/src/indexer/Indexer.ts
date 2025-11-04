@@ -815,7 +815,7 @@ export class Indexer {
 
       // Query round number
       const round = await apiAt.query.multiBlockElection?.round?.();
-      const roundNumber = round && typeof round.toNumber === 'function' ? round.toNumber() : 0;
+      const roundNumber = round && typeof (round as any).toNumber === 'function' ? (round as any).toNumber() : 0;
 
       // Query active era for era_id (the era during which this phase is occurring, not the era being elected for)
       const activeEraOption = await apiAt.query.staking?.activeEra?.();
@@ -862,9 +862,9 @@ export class Indexer {
         const nominatorCount = await apiAt.query.staking?.counterForNominators?.();
         const targetValidatorCount = await apiAt.query.staking?.validatorCount?.();
 
-        phaseData.validatorCandidates = validatorCount && typeof validatorCount.toNumber === 'function' ? validatorCount.toNumber() : null;
-        phaseData.nominatorCandidates = nominatorCount && typeof nominatorCount.toNumber === 'function' ? nominatorCount.toNumber() : null;
-        phaseData.targetValidatorCount = targetValidatorCount && typeof targetValidatorCount.toNumber === 'function' ? targetValidatorCount.toNumber() : null;
+        phaseData.validatorCandidates = validatorCount && typeof (validatorCount as any).toNumber === 'function' ? (validatorCount as any).toNumber() : null;
+        phaseData.nominatorCandidates = nominatorCount && typeof (nominatorCount as any).toNumber === 'function' ? (nominatorCount as any).toNumber() : null;
+        phaseData.targetValidatorCount = targetValidatorCount && typeof (targetValidatorCount as any).toNumber === 'function' ? (targetValidatorCount as any).toNumber() : null;
 
         this.logger.info({
           validatorCandidates: phaseData.validatorCandidates,
