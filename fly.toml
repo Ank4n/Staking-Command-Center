@@ -1,47 +1,47 @@
-# Fly.io configuration for Staking Command Center - Polkadot
+# fly.toml app configuration file generated for staking-polkadot on 2025-11-04T20:02:56+05:30
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "staking-polkadot"
-
-primary_region = "iad"  # Choose closest region: iad (US East), lhr (London), sin (Singapore), syd (Sydney)
+app = 'staking-polkadot'
+primary_region = 'arn'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  CHAIN = "polkadot"
-  DB_PATH = "/data/staking-polkadot.db"
-  MAX_ERAS = "100"
-  SYNC_BLOCKS = "4000"
-  LOG_LEVEL = "info"
-  API_PORT = "4000"
-  API_HOST = "0.0.0.0"
+  API_HOST = '0.0.0.0'
+  API_PORT = '4000'
+  CHAIN = 'polkadot'
+  DB_PATH = '/data/staking-polkadot.db'
+  LOG_LEVEL = 'info'
+  MAX_ERAS = '100'
+  SYNC_BLOCKS = '10'
 
-[mounts]
-  source = "staking_data"
-  destination = "/data"
+[[mounts]]
+  source = 'staking_data'
+  destination = '/data'
 
 [[services]]
+  protocol = 'tcp'
   internal_port = 4000
-  protocol = "tcp"
 
   [[services.ports]]
-    handlers = ["http"]
     port = 80
+    handlers = ['http']
 
   [[services.ports]]
-    handlers = ["tls", "http"]
     port = 443
+    handlers = ['tls', 'http']
 
-  # Health check endpoint
   [[services.http_checks]]
-    interval = 30000
-    timeout = 5000
-    grace_period = "10s"
-    method = "get"
-    path = "/api/health"
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'get'
+    path = '/api/health'
 
-# Resource configuration
 [[vm]]
-  cpu_kind = "shared"
+  memory = '1gb'
+  cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 512  # Increase to 1024 if needed

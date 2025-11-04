@@ -94,7 +94,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ status, isConnected }) => 
 
       <div className="status-bar">
         <div className="status-card">
-          <div className="label">Current Era</div>
+          <div className="label">Active Era</div>
           <div className="value">{status.currentEra || '—'}</div>
           <div className="subvalue">Session {status.currentSession || '—'}</div>
         </div>
