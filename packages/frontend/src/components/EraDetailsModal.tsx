@@ -451,13 +451,6 @@ const OverviewTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraData
             <div className="info-card-subvalue">Ongoing</div>
           )}
         </div>
-
-        <div className="info-card">
-          <div className="info-card-label">Total Validator Points</div>
-          <div className="info-card-value" style={{ fontSize: '18px' }}>
-            {eraData.sessions.reduce((sum, s) => sum + s.validatorPointsTotal, 0).toLocaleString()}
-          </div>
-        </div>
       </div>
 
       {/* Inflation and Rewards (Completed Eras Only) */}
@@ -710,7 +703,7 @@ const SessionsTab: React.FC<{ eraData: EraDetails }> = ({ eraData }) => {
 
                   <div>
                     <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      Validator Points
+                      Validator Count
                     </div>
                     <div style={{ fontSize: '14px', fontWeight: '600', color: '#10b981' }}>
                       {session.validatorPointsTotal.toLocaleString()}
