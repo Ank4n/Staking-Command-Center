@@ -577,6 +577,24 @@ export class DatabaseClient {
     return this.db.prepare(`SELECT * FROM ${tableName} LIMIT ?`).all(limit);
   }
 
+  // ===== REIMPORT REQUESTS =====
+
+  submitReimportRequest(chain: string, blockNumber: number): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO reimport_requests (chain, block_number, status, submitted_at)
+      VALUES (?, ?, 'pending', ?)
+    `);
+    const result = stmt.run(chain, blockNumber, Date.now());
+    return result.lastInsertRowid as number;
+  }
+
+  getReimportRequests(limit: number = 100): any[] {
+    const rows = this.db
+      .prepare('SELECT * FROM reimport_requests ORDER BY submitted_at DESC LIMIT ?')
+      .all(limit) as any[];
+    return rows;
+  }
+
   close(): void {
     this.db.close();
   }

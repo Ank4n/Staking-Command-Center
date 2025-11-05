@@ -191,64 +191,117 @@ async function reimportBlock(chain: 'rc' | 'ah', blockNumber: number) {
             }
           }
 
-          // Query era information from Asset Hub at block n-1 (as per CLAUDE.md instructions)
-          const queryBlockNumber = Math.max(1, blockNumber - 1);
-          let activeEraId: number | null = null;
-          let plannedEraId: number | null = null;
+          // Query era information from Asset Hub at block n-1 for the ENDING session
+          const queryBlockNumberForEndingSession = Math.max(1, blockNumber - 1);
+          let activeEraIdForEndingSession: number | null = null;
+          let plannedEraIdForEndingSession: number | null = null;
 
           try {
-            const queryBlockHash = await api.rpc.chain.getBlockHash(queryBlockNumber);
+            const queryBlockHash = await api.rpc.chain.getBlockHash(queryBlockNumberForEndingSession);
             const apiAtQuery = await api.at(queryBlockHash);
 
             // Get active era
             const activeEraOption = await apiAtQuery.query.staking?.activeEra?.();
             logger.info({
               sessionId,
-              queryBlockNumber,
+              queryBlockNumber: queryBlockNumberForEndingSession,
               hasActiveEra: !!activeEraOption,
               isEmpty: activeEraOption?.isEmpty,
               activeEraRaw: activeEraOption?.toString()
-            }, 'Querying activeEra from Asset Hub');
+            }, 'Querying activeEra from Asset Hub for ending session');
 
             if (activeEraOption && !activeEraOption.isEmpty) {
               const activeEra = (activeEraOption as any).toJSON();
-              activeEraId = activeEra?.index || null;
-              logger.info({ activeEra, activeEraId }, 'Parsed activeEra');
+              activeEraIdForEndingSession = activeEra?.index || null;
+              logger.info({ activeEra, activeEraId: activeEraIdForEndingSession }, 'Parsed activeEra for ending session');
             }
 
             // Get planned era (currentEra)
             const currentEraOption = await apiAtQuery.query.staking?.currentEra?.();
             logger.info({
               sessionId,
-              queryBlockNumber,
+              queryBlockNumber: queryBlockNumberForEndingSession,
               hasCurrentEra: !!currentEraOption,
               isEmpty: currentEraOption?.isEmpty,
-              currentEraRaw: currentEraOption?.toString(),
-              type: typeof currentEraOption,
-              keys: currentEraOption ? Object.keys(currentEraOption) : []
-            }, 'Querying currentEra from Asset Hub');
+              currentEraRaw: currentEraOption?.toString()
+            }, 'Querying currentEra from Asset Hub for ending session');
 
             if (currentEraOption && !currentEraOption.isEmpty) {
               // currentEra returns a plain number codec, not an object like activeEra
               // Use toJSON() to get the numeric value
               const asAny = currentEraOption as any;
-              plannedEraId = typeof asAny.toJSON === 'function' ? asAny.toJSON() : null;
-              logger.info({ plannedEraId }, 'Parsed currentEra');
+              plannedEraIdForEndingSession = typeof asAny.toJSON === 'function' ? asAny.toJSON() : null;
+              logger.info({ plannedEraId: plannedEraIdForEndingSession }, 'Parsed currentEra for ending session');
             }
           } catch (e) {
-            logger.error({ error: e, sessionId, queryBlockNumber }, 'Error querying era info from Asset Hub');
+            logger.error({ error: e, sessionId, queryBlockNumber: queryBlockNumberForEndingSession }, 'Error querying era info from Asset Hub for ending session');
           }
 
-          // Create/update session
+          // Create/update the ENDING session (sessionId = endIndex)
           db.upsertSession({
             sessionId,
             blockNumber,
             activationTimestamp,
-            activeEraId,
-            plannedEraId,
+            activeEraId: activeEraIdForEndingSession,
+            plannedEraId: plannedEraIdForEndingSession,
             validatorPointsTotal: totalPoints,
           });
-          logger.info({ sessionId, activeEraId, plannedEraId, totalPoints }, 'Created/updated session');
+          logger.info({ sessionId, activeEraId: activeEraIdForEndingSession, plannedEraId: plannedEraIdForEndingSession, totalPoints }, 'Ending session created/updated');
+
+          // Create the STARTING session (sessionId = endIndex + 1)
+          const nextSessionId = sessionId + 1;
+          let activeEraIdForStartingSession: number | null = null;
+          let plannedEraIdForStartingSession: number | null = null;
+
+          try {
+            const currentBlockHash = await api.rpc.chain.getBlockHash(blockNumber);
+            const apiAtCurrent = await api.at(currentBlockHash);
+
+            // Get active era for the starting session
+            const activeEraOptionCurrent = await apiAtCurrent.query.staking?.activeEra?.();
+            logger.info({
+              sessionId: nextSessionId,
+              queryBlockNumber: blockNumber,
+              hasActiveEra: !!activeEraOptionCurrent,
+              isEmpty: activeEraOptionCurrent?.isEmpty,
+              activeEraRaw: activeEraOptionCurrent?.toString()
+            }, 'Querying activeEra from Asset Hub for starting session');
+
+            if (activeEraOptionCurrent && !activeEraOptionCurrent.isEmpty) {
+              const activeEra = (activeEraOptionCurrent as any).toJSON();
+              activeEraIdForStartingSession = activeEra?.index || null;
+              logger.info({ activeEra, activeEraId: activeEraIdForStartingSession }, 'Parsed activeEra for starting session');
+            }
+
+            // Get planned era (currentEra) for the starting session
+            const currentEraOptionCurrent = await apiAtCurrent.query.staking?.currentEra?.();
+            logger.info({
+              sessionId: nextSessionId,
+              queryBlockNumber: blockNumber,
+              hasCurrentEra: !!currentEraOptionCurrent,
+              isEmpty: currentEraOptionCurrent?.isEmpty,
+              currentEraRaw: currentEraOptionCurrent?.toString()
+            }, 'Querying currentEra from Asset Hub for starting session');
+
+            if (currentEraOptionCurrent && !currentEraOptionCurrent.isEmpty) {
+              const asAny = currentEraOptionCurrent as any;
+              plannedEraIdForStartingSession = typeof asAny.toJSON === 'function' ? asAny.toJSON() : null;
+              logger.info({ plannedEraId: plannedEraIdForStartingSession }, 'Parsed currentEra for starting session');
+            }
+          } catch (e) {
+            logger.error({ error: e, sessionId: nextSessionId, queryBlockNumber: blockNumber }, 'Error querying era info from Asset Hub for starting session');
+          }
+
+          // Create the STARTING session with partial data (will be completed when this session ends)
+          db.upsertSession({
+            sessionId: nextSessionId,
+            blockNumber: null, // Will be filled when this session ends
+            activationTimestamp: null, // Will be filled if this session starts a new era
+            activeEraId: activeEraIdForStartingSession,
+            plannedEraId: plannedEraIdForStartingSession,
+            validatorPointsTotal: 0, // Will be filled when this session ends
+          });
+          logger.info({ sessionId: nextSessionId, activeEraId: activeEraIdForStartingSession, plannedEraId: plannedEraIdForStartingSession }, 'Starting session created');
         }
 
         // Process PhaseTransitioned event (MultiBlockElection.PhaseTransitioned)

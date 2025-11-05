@@ -309,5 +309,49 @@ export function createRouter(db: DatabaseClient): Router {
     }
   });
 
+  // ===== REIMPORT ENDPOINT =====
+
+  // Request a block to be reimported
+  router.post('/reimport', async (req, res) => {
+    try {
+      const { chain, blockNumber } = req.body;
+
+      // Validate input
+      if (!chain || !blockNumber) {
+        return res.status(400).json({ error: 'chain and blockNumber are required' });
+      }
+
+      if (chain !== 'relay_chain' && chain !== 'asset_hub') {
+        return res.status(400).json({ error: 'chain must be "relay_chain" or "asset_hub"' });
+      }
+
+      if (typeof blockNumber !== 'number' || blockNumber < 0) {
+        return res.status(400).json({ error: 'blockNumber must be a positive number' });
+      }
+
+      // Submit reimport request to database
+      const requestId = db.submitReimportRequest(chain, blockNumber);
+
+      res.json({
+        success: true,
+        id: requestId,
+        message: 'Reimport request submitted. Block will be processed within 10 seconds.'
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Failed to submit reimport request' });
+    }
+  });
+
+  // Get all reimport requests
+  router.get('/reimport', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const requests = db.getReimportRequests(Math.min(limit, 1000));
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get reimport requests' });
+    }
+  });
+
   return router;
 }

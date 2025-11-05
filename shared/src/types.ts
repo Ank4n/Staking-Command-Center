@@ -20,7 +20,7 @@ export interface BlockchainEvent {
 // Session types (Asset Hub only)
 export interface Session {
   sessionId: number;
-  blockNumber: number; // FK to Blocks_AH
+  blockNumber: number | null; // FK to Blocks_AH (null for future sessions not yet ended)
   activationTimestamp: number | null; // From event data
   activeEraId: number | null; // The era that is active during this session
   plannedEraId: number | null; // The era that is being planned during this session

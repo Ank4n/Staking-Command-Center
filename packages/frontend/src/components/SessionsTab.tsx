@@ -122,7 +122,7 @@ export const SessionsTab: React.FC = () => {
                 <td>
                   <strong>#{session.sessionId}</strong>
                 </td>
-                <td>#{session.blockNumber.toLocaleString()}</td>
+                <td>{session.blockNumber ? `#${session.blockNumber.toLocaleString()}` : '-'}</td>
                 <td>
                   {session.activeEraId !== null ? (
                     <>

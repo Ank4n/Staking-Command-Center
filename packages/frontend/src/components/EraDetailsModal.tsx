@@ -659,7 +659,7 @@ const SessionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
                       Block Number
                     </div>
                     <div style={{ fontSize: '14px', fontWeight: '600', color: '#aaa', fontFamily: 'monospace' }}>
-                      #{session.blockNumber.toLocaleString()}
+                      {session.blockNumber ? `#${session.blockNumber.toLocaleString()}` : '-'}
                     </div>
                   </div>
 

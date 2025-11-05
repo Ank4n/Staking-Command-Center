@@ -26,6 +26,7 @@ export class StakingDatabase {
     this.db.pragma('foreign_keys = ON');
 
     this.initialize();
+    this.runMigrations();
   }
 
   /**
@@ -83,12 +84,12 @@ export class StakingDatabase {
       -- Created from stakingRelaychainClient.SessionReportReceived events
       CREATE TABLE IF NOT EXISTS sessions (
         session_id INTEGER PRIMARY KEY,
-        block_number INTEGER NOT NULL,
+        block_number INTEGER, -- Nullable for future sessions not yet ended
         activation_timestamp INTEGER,
         active_era_id INTEGER,
         planned_era_id INTEGER,
         validator_points_total INTEGER NOT NULL,
-        FOREIGN KEY (block_number) REFERENCES blocks_ah(block_number) ON DELETE CASCADE
+        FOREIGN KEY (block_number) REFERENCES blocks_ah(block_number) ON DELETE SET NULL
         -- Note: No FK constraints for active_era_id and planned_era_id as they may reference future eras
       );
 
@@ -161,9 +162,105 @@ export class StakingDatabase {
         value TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+
+      -- Reimport requests table (for API-triggered reimports)
+      CREATE TABLE IF NOT EXISTS reimport_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chain TEXT NOT NULL CHECK(chain IN ('relay_chain', 'asset_hub')),
+        block_number INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'processing', 'completed', 'failed')),
+        submitted_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        error TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_reimport_status ON reimport_requests(status);
+      CREATE INDEX IF NOT EXISTS idx_reimport_submitted ON reimport_requests(submitted_at);
+
+      -- Migration tracking table
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at INTEGER NOT NULL
+      );
     `);
 
     this.logger.info('Database schema initialized');
+  }
+
+  /**
+   * Run database migrations idempotently
+   */
+  private runMigrations(): void {
+    this.logger.info('Checking for pending migrations');
+
+    // Get applied migrations
+    const appliedMigrations = this.db
+      .prepare('SELECT version FROM schema_migrations ORDER BY version')
+      .all() as { version: number }[];
+
+    const appliedVersions = new Set(appliedMigrations.map(m => m.version));
+
+    // Migration 1: Make sessions.block_number nullable and change ON DELETE CASCADE to SET NULL
+    if (!appliedVersions.has(1)) {
+      this.logger.info('Applying migration 1: Update sessions table schema');
+
+      try {
+        // Check if sessions table exists and has data
+        const tableExists = this.db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+          .get();
+
+        if (tableExists) {
+          // SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+          this.db.exec(`
+            BEGIN TRANSACTION;
+
+            -- Create new sessions table with updated schema
+            CREATE TABLE sessions_new (
+              session_id INTEGER PRIMARY KEY,
+              block_number INTEGER, -- Now nullable for future sessions
+              activation_timestamp INTEGER,
+              active_era_id INTEGER,
+              planned_era_id INTEGER,
+              validator_points_total INTEGER NOT NULL,
+              FOREIGN KEY (block_number) REFERENCES blocks_ah(block_number) ON DELETE SET NULL
+            );
+
+            -- Copy existing data
+            INSERT INTO sessions_new
+            SELECT session_id, block_number, activation_timestamp, active_era_id, planned_era_id, validator_points_total
+            FROM sessions;
+
+            -- Drop old table
+            DROP TABLE sessions;
+
+            -- Rename new table
+            ALTER TABLE sessions_new RENAME TO sessions;
+
+            -- Recreate indexes
+            CREATE INDEX idx_sessions_block ON sessions(block_number);
+            CREATE INDEX idx_sessions_active_era ON sessions(active_era_id);
+            CREATE INDEX idx_sessions_planned_era ON sessions(planned_era_id);
+
+            COMMIT;
+          `);
+
+          this.logger.info('Migration 1: Sessions table schema updated successfully');
+        } else {
+          this.logger.info('Migration 1: Sessions table does not exist yet, skipping');
+        }
+
+        // Record migration
+        this.db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(1, Date.now());
+
+      } catch (error) {
+        this.logger.error({ error }, 'Migration 1 failed');
+        throw error;
+      }
+    }
+
+    this.logger.info({ appliedMigrations: appliedVersions.size + (appliedVersions.has(1) ? 0 : 1) }, 'Migrations complete');
   }
 
   // ===== BLOCK METHODS =====
@@ -339,11 +436,11 @@ export class StakingDatabase {
         session_id, block_number, activation_timestamp, active_era_id, planned_era_id, validator_points_total
       ) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
-        block_number = excluded.block_number,
+        block_number = COALESCE(excluded.block_number, block_number),
         activation_timestamp = COALESCE(excluded.activation_timestamp, activation_timestamp),
         active_era_id = COALESCE(excluded.active_era_id, active_era_id),
         planned_era_id = COALESCE(excluded.planned_era_id, planned_era_id),
-        validator_points_total = excluded.validator_points_total
+        validator_points_total = CASE WHEN excluded.validator_points_total > 0 THEN excluded.validator_points_total ELSE validator_points_total END
     `);
 
     stmt.run(
@@ -780,6 +877,45 @@ export class StakingDatabase {
       warnings: warningCount.count,
       electionPhases: electionPhasesCount.count,
     };
+  }
+
+  // ===== REIMPORT REQUEST METHODS =====
+
+  submitReimportRequest(chain: string, blockNumber: number): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO reimport_requests (chain, block_number, status, submitted_at)
+      VALUES (?, ?, 'pending', ?)
+    `);
+    const result = stmt.run(chain, blockNumber, Date.now());
+    return result.lastInsertRowid as number;
+  }
+
+  getPendingReimportRequests(limit: number = 5): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM reimport_requests
+      WHERE status = 'pending'
+      ORDER BY submitted_at ASC
+      LIMIT ?
+    `);
+    return stmt.all(limit) as any[];
+  }
+
+  getAllReimportRequests(limit: number = 100): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM reimport_requests
+      ORDER BY submitted_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(limit) as any[];
+  }
+
+  updateReimportRequestStatus(id: number, status: string, error?: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE reimport_requests
+      SET status = ?, completed_at = ?, error = ?
+      WHERE id = ?
+    `);
+    stmt.run(status, Date.now(), error || null, id);
   }
 
   /**

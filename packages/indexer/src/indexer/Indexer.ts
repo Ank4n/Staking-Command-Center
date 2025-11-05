@@ -14,6 +14,7 @@ export class Indexer {
   private unsubscribeRC: (() => void) | null = null;
   private unsubscribeAH: (() => void) | null = null;
   private gapFillerInterval: NodeJS.Timeout | null = null;
+  private reimportCheckerInterval: NodeJS.Timeout | null = null;
 
   constructor(apiRC: ApiPromise, apiAH: ApiPromise, db: StakingDatabase, logger: Logger, syncBlocks: number) {
     this.apiRC = apiRC;
@@ -101,6 +102,9 @@ export class Indexer {
       // Start periodic gap filler (every 30 seconds)
       this.startGapFiller();
 
+      // Start periodic reimport checker (every 10 seconds)
+      this.startReimportChecker();
+
       this.logger.info('Indexer started successfully');
     } catch (error) {
       this.logger.error({ error }, 'Failed to start indexer');
@@ -121,6 +125,70 @@ export class Indexer {
         this.logger.error({ error }, 'Error in gap filler');
       }
     }, 30000); // Run every 30 seconds
+  }
+
+  /**
+   * Start periodic reimport request checker
+   */
+  private startReimportChecker(): void {
+    this.logger.info('Starting periodic reimport checker (every 10 seconds)');
+
+    this.reimportCheckerInterval = setInterval(async () => {
+      try {
+        await this.processReimportRequests();
+      } catch (error) {
+        this.logger.error({ error }, 'Error in reimport checker');
+      }
+    }, 10000); // Run every 10 seconds
+  }
+
+  /**
+   * Process pending reimport requests
+   */
+  private async processReimportRequests(): Promise<void> {
+    // Get pending reimport requests (up to 5 at a time)
+    const pendingRequests = this.db.getPendingReimportRequests(5);
+
+    if (pendingRequests.length === 0) {
+      return;
+    }
+
+    this.logger.info({ count: pendingRequests.length }, 'Processing reimport requests');
+
+    for (const request of pendingRequests) {
+      try {
+        this.logger.info({ id: request.id, chain: request.chain, blockNumber: request.block_number }, 'Reimporting block');
+
+        // Mark as processing
+        this.db.updateReimportRequestStatus(request.id, 'processing');
+
+        // Delete old block data atomically
+        // Events will be cascade deleted, but sessions will keep their data (block_number will be SET NULL with new schema)
+        // Block and events will be recreated, sessions will be upserted (preserving existing data)
+        if (request.chain === 'relay_chain') {
+          this.db.deleteBlockRC(request.block_number);
+        } else if (request.chain === 'asset_hub') {
+          this.db.deleteBlockAH(request.block_number);
+        }
+
+        // Re-fetch and process the block
+        if (request.chain === 'relay_chain') {
+          await this.processBlockByNumberRC(request.block_number);
+        } else if (request.chain === 'asset_hub') {
+          await this.processBlockByNumberAH(request.block_number);
+        }
+
+        // Mark as completed
+        this.db.updateReimportRequestStatus(request.id, 'completed');
+
+        this.logger.info({ id: request.id, chain: request.chain, blockNumber: request.block_number }, 'Block reimported successfully');
+      } catch (error) {
+        this.logger.error({ error, id: request.id, chain: request.chain, blockNumber: request.block_number }, 'Failed to reimport block');
+
+        // Mark as failed (block data was deleted, but this is expected for reimport)
+        this.db.updateReimportRequestStatus(request.id, 'failed', String(error));
+      }
+    }
   }
 
   /**
@@ -700,64 +768,121 @@ export class Indexer {
         }
       }
 
-      // Query era information from Asset Hub at block n-1 (as per CLAUDE.md instructions)
+      // Query era information from Asset Hub at block n-1 for the ENDING session
       // This is because the event is received at block n, but the era info should be queried from n-1
-      const queryBlockNumber = Math.max(1, blockNumber - 1);
-      let activeEraId: number | null = null;
-      let plannedEraId: number | null = null;
+      const queryBlockNumberForEndingSession = Math.max(1, blockNumber - 1);
+      let activeEraIdForEndingSession: number | null = null;
+      let plannedEraIdForEndingSession: number | null = null;
 
       try {
-        const queryBlockHash = await this.apiAH.rpc.chain.getBlockHash(queryBlockNumber);
+        const queryBlockHash = await this.apiAH.rpc.chain.getBlockHash(queryBlockNumberForEndingSession);
         const apiAt = await this.apiAH.at(queryBlockHash);
 
         // Get active era
         const activeEraOption = await apiAt.query.staking?.activeEra?.();
         this.logger.info({
           sessionId,
-          queryBlockNumber,
+          queryBlockNumber: queryBlockNumberForEndingSession,
           hasActiveEra: !!activeEraOption,
           isEmpty: activeEraOption?.isEmpty,
           activeEraRaw: activeEraOption?.toString()
-        }, 'Querying activeEra from Asset Hub');
+        }, 'Querying activeEra from Asset Hub for ending session');
 
         if (activeEraOption && !activeEraOption.isEmpty) {
           const activeEra = (activeEraOption as any).toJSON();
-          activeEraId = activeEra?.index || null;
-          this.logger.info({ activeEra, activeEraId }, 'Parsed activeEra');
+          activeEraIdForEndingSession = activeEra?.index || null;
+          this.logger.info({ activeEra, activeEraId: activeEraIdForEndingSession }, 'Parsed activeEra for ending session');
         }
 
         // Get planned era (currentEra)
         const currentEraOption = await apiAt.query.staking?.currentEra?.();
         this.logger.info({
           sessionId,
-          queryBlockNumber,
+          queryBlockNumber: queryBlockNumberForEndingSession,
           hasCurrentEra: !!currentEraOption,
           isEmpty: currentEraOption?.isEmpty,
           currentEraRaw: currentEraOption?.toString()
-        }, 'Querying currentEra from Asset Hub');
+        }, 'Querying currentEra from Asset Hub for ending session');
 
         if (currentEraOption && !currentEraOption.isEmpty) {
           // currentEra returns a plain number codec, not an object like activeEra
           // Use toJSON() to get the numeric value
           const asAny = currentEraOption as any;
-          plannedEraId = typeof asAny.toJSON === 'function' ? asAny.toJSON() : null;
-          this.logger.info({ plannedEraId }, 'Parsed currentEra');
+          plannedEraIdForEndingSession = typeof asAny.toJSON === 'function' ? asAny.toJSON() : null;
+          this.logger.info({ plannedEraId: plannedEraIdForEndingSession }, 'Parsed currentEra for ending session');
         }
       } catch (e) {
-        this.logger.error({ error: e, sessionId, queryBlockNumber }, 'Error querying era info from Asset Hub');
+        this.logger.error({ error: e, sessionId, queryBlockNumber: queryBlockNumberForEndingSession }, 'Error querying era info from Asset Hub for ending session');
       }
 
-      // Create/update session
+      // Create/update the ENDING session (sessionId = endIndex)
       this.db.upsertSession({
         sessionId,
         blockNumber,
         activationTimestamp,
-        activeEraId,
-        plannedEraId,
+        activeEraId: activeEraIdForEndingSession,
+        plannedEraId: plannedEraIdForEndingSession,
         validatorPointsTotal: totalPoints,
       });
 
-      this.logger.info({ sessionId, activeEraId, plannedEraId, totalPoints }, 'Session created/updated');
+      this.logger.info({ sessionId, activeEraId: activeEraIdForEndingSession, plannedEraId: plannedEraIdForEndingSession, totalPoints }, 'Ending session created/updated');
+
+      // Create the STARTING session (sessionId = endIndex + 1)
+      // Query era information at block n (current block) for the starting session
+      const nextSessionId = sessionId + 1;
+      let activeEraIdForStartingSession: number | null = null;
+      let plannedEraIdForStartingSession: number | null = null;
+
+      try {
+        const currentBlockHash = await this.apiAH.rpc.chain.getBlockHash(blockNumber);
+        const apiAtCurrent = await this.apiAH.at(currentBlockHash);
+
+        // Get active era for the starting session
+        const activeEraOptionCurrent = await apiAtCurrent.query.staking?.activeEra?.();
+        this.logger.info({
+          sessionId: nextSessionId,
+          queryBlockNumber: blockNumber,
+          hasActiveEra: !!activeEraOptionCurrent,
+          isEmpty: activeEraOptionCurrent?.isEmpty,
+          activeEraRaw: activeEraOptionCurrent?.toString()
+        }, 'Querying activeEra from Asset Hub for starting session');
+
+        if (activeEraOptionCurrent && !activeEraOptionCurrent.isEmpty) {
+          const activeEra = (activeEraOptionCurrent as any).toJSON();
+          activeEraIdForStartingSession = activeEra?.index || null;
+          this.logger.info({ activeEra, activeEraId: activeEraIdForStartingSession }, 'Parsed activeEra for starting session');
+        }
+
+        // Get planned era (currentEra) for the starting session
+        const currentEraOptionCurrent = await apiAtCurrent.query.staking?.currentEra?.();
+        this.logger.info({
+          sessionId: nextSessionId,
+          queryBlockNumber: blockNumber,
+          hasCurrentEra: !!currentEraOptionCurrent,
+          isEmpty: currentEraOptionCurrent?.isEmpty,
+          currentEraRaw: currentEraOptionCurrent?.toString()
+        }, 'Querying currentEra from Asset Hub for starting session');
+
+        if (currentEraOptionCurrent && !currentEraOptionCurrent.isEmpty) {
+          const asAny = currentEraOptionCurrent as any;
+          plannedEraIdForStartingSession = typeof asAny.toJSON === 'function' ? asAny.toJSON() : null;
+          this.logger.info({ plannedEraId: plannedEraIdForStartingSession }, 'Parsed currentEra for starting session');
+        }
+      } catch (e) {
+        this.logger.error({ error: e, sessionId: nextSessionId, queryBlockNumber: blockNumber }, 'Error querying era info from Asset Hub for starting session');
+      }
+
+      // Create the STARTING session with partial data (will be completed when this session ends)
+      this.db.upsertSession({
+        sessionId: nextSessionId,
+        blockNumber: null, // Will be filled when this session ends
+        activationTimestamp: null, // Will be filled if this session starts a new era
+        activeEraId: activeEraIdForStartingSession,
+        plannedEraId: plannedEraIdForStartingSession,
+        validatorPointsTotal: 0, // Will be filled when this session ends
+      });
+
+      this.logger.info({ sessionId: nextSessionId, activeEraId: activeEraIdForStartingSession, plannedEraId: plannedEraIdForStartingSession }, 'Starting session created');
 
     } catch (error) {
       this.logger.error({ error, blockNumber, eventType: 'SessionReportReceived' }, 'Error handling SessionReportReceived');
