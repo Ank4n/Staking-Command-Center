@@ -90,11 +90,11 @@ export const SessionsTab: React.FC = () => {
         <thead>
           <tr>
             <th>Session ID</th>
-            <th>Block Number</th>
+            <th>Ending Block</th>
             <th>Active Era ID</th>
             <th>Planned Era ID</th>
             <th>Activation Time</th>
-            <th>Validator Points Total</th>
+            <th>Validator Count</th>
           </tr>
         </thead>
         <tbody>

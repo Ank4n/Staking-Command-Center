@@ -442,10 +442,14 @@ export class DatabaseClient {
       .prepare('SELECT block_number FROM sessions WHERE session_id = ?')
       .get(era.session_start) as { block_number: number } | undefined;
 
-    // Start from previous session's end block, or first session's block if no previous session
-    let startBlock = prevSession?.block_number || firstSession?.block_number || 0;
-
-    if (startBlock === 0) {
+    // Start from previous session's end block + 1 (exclude the block where previous era ended)
+    // If no previous session, start from first session's block
+    let startBlock: number;
+    if (prevSession?.block_number) {
+      startBlock = prevSession.block_number + 1;
+    } else if (firstSession?.block_number) {
+      startBlock = firstSession.block_number;
+    } else {
       return [];
     }
 
