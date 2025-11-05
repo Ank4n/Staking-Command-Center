@@ -656,7 +656,25 @@ const SessionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
                 }}>
                   <div>
                     <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      Block Number
+                      Start Block
+                    </div>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#aaa', fontFamily: 'monospace' }}>
+                      {(() => {
+                        // Get previous session's end block and add 1 to get this session's start block
+                        // Sessions are ordered ASC by session_id, so index-1 is the previous session
+                        const prevSession = eraData.sessions[index - 1];
+                        if (prevSession?.blockNumber) {
+                          return `#${(prevSession.blockNumber + 1).toLocaleString()}`;
+                        }
+                        // If no previous session (first session of era), we can't determine start block
+                        return '-';
+                      })()}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      End Block
                     </div>
                     <div style={{ fontSize: '14px', fontWeight: '600', color: '#aaa', fontFamily: 'monospace' }}>
                       {session.blockNumber ? `#${session.blockNumber.toLocaleString()}` : '-'}
