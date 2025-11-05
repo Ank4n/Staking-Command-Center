@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useStatus, fetchElectionPhasesByEra } from '../hooks/useApi';
-import { generateMockEraData, type MockEraDetails } from '../utils/mockEraData';
+import { generateMockEraData, type EraDetails } from '../utils/mockEraData';
 import type { Era, Session, Warning, BlockchainEvent } from '@staking-cc/shared';
 
 interface EraDetailsModalProps {
@@ -16,7 +16,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose }) => {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [loading, setLoading] = useState(true);
-  const [eraData, setEraData] = useState<MockEraDetails | null>(null);
+  const [eraData, setEraData] = useState<EraDetails | null>(null);
   const { status } = useStatus();
 
   useEffect(() => {
@@ -27,21 +27,24 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
 
     const fetchEraData = async () => {
       try {
-        // Fetch era, sessions, warnings, events, and election phases in parallel
-        const [eraRes, sessionsRes, warningsRes, eventsRes, electionPhases] = await Promise.all([
-          fetch(`${API_BASE_URL}/api/eras/${eraId}`),
+        // First fetch era to get sessionStart
+        const eraRes = await fetch(`${API_BASE_URL}/api/eras/${eraId}`);
+        if (!eraRes.ok) throw new Error('Failed to fetch era');
+        const era: Era = await eraRes.json();
+
+        // Fetch sessions, warnings, events, election phases, and previous session in parallel
+        const [sessionsRes, warningsRes, eventsRes, electionPhases, prevSessionRes] = await Promise.all([
           fetch(`${API_BASE_URL}/api/eras/${eraId}/sessions`),
           fetch(`${API_BASE_URL}/api/eras/${eraId}/warnings`),
           fetch(`${API_BASE_URL}/api/eras/${eraId}/events/ah`),
           fetchElectionPhasesByEra(eraId),
+          fetch(`${API_BASE_URL}/api/sessions/${era.sessionStart - 1}`),
         ]);
 
-        if (!eraRes.ok) throw new Error('Failed to fetch era');
-
-        const era: Era = await eraRes.json();
         const sessions: Session[] = sessionsRes.ok ? await sessionsRes.json() : [];
         const warnings: Warning[] = warningsRes.ok ? await warningsRes.json() : [];
         const allEvents: BlockchainEvent[] = eventsRes.ok ? await eventsRes.json() : [];
+        const prevSession: Session | null = prevSessionRes.ok ? await prevSessionRes.json() : null;
 
         // Filter events to show only important event types (from CLAUDE.md Events Tracking section)
         const importantEventPrefixes = [
@@ -124,13 +127,14 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
           : mockData.validatorCount;
 
         // Merge real data with mock data
-        const mergedData: MockEraDetails = {
+        const mergedData: EraDetails = {
           eraId: era.eraId,
           sessionStart: era.sessionStart,
           sessionEnd: era.sessionEnd,
           startTime: era.startTime,
           endTime: endTime,
           sessions: sessions,
+          prevSession: prevSession,
           warnings: warnings,
           events: eraEvents,
           isActive: isActive,
@@ -291,7 +295,7 @@ const getAssetHubSubscanUrl = (chain: string): string => {
 };
 
 // Overview Tab Component
-const OverviewTab: React.FC<{ eraData: MockEraDetails; chain: string }> = ({ eraData, chain }) => {
+const OverviewTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraData, chain }) => {
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return '—';
     return new Date(timestamp).toLocaleString();
@@ -560,7 +564,7 @@ const OverviewTab: React.FC<{ eraData: MockEraDetails; chain: string }> = ({ era
 };
 
 // Sessions Tab Component
-const SessionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
+const SessionsTab: React.FC<{ eraData: EraDetails }> = ({ eraData }) => {
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return '—';
     return new Date(timestamp).toLocaleString();
@@ -660,13 +664,17 @@ const SessionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
                     </div>
                     <div style={{ fontSize: '14px', fontWeight: '600', color: '#aaa', fontFamily: 'monospace' }}>
                       {(() => {
-                        // Get previous session's end block and add 1 to get this session's start block
+                        // For first session of era, use prevSession from previous era
+                        if (index === 0 && eraData.prevSession?.blockNumber) {
+                          return `#${(eraData.prevSession.blockNumber + 1).toLocaleString()}`;
+                        }
+                        // For other sessions, use previous session in current era
                         // Sessions are ordered ASC by session_id, so index-1 is the previous session
                         const prevSession = eraData.sessions[index - 1];
                         if (prevSession?.blockNumber) {
                           return `#${(prevSession.blockNumber + 1).toLocaleString()}`;
                         }
-                        // If no previous session (first session of era), we can't determine start block
+                        // If no previous session available, can't determine start block
                         return '-';
                       })()}
                     </div>
@@ -730,7 +738,7 @@ const SessionsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
 };
 
 // Events Tab Component
-const EventsTab: React.FC<{ eraData: MockEraDetails; chain: string }> = ({ eraData, chain }) => {
+const EventsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraData, chain }) => {
   const getEventColor = (eventType: string) => {
     if (eventType.includes('SessionReportReceived')) return '#667eea';
     if (eventType.includes('EraPaid')) return '#10b981';
@@ -811,7 +819,7 @@ const EventsTab: React.FC<{ eraData: MockEraDetails; chain: string }> = ({ eraDa
 };
 
 // Warnings Tab Component
-const WarningsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
+const WarningsTab: React.FC<{ eraData: EraDetails }> = ({ eraData }) => {
   const formatTimestamp = (timestamp: number) => {
     return new Date(timestamp).toLocaleString();
   };
@@ -883,7 +891,7 @@ const WarningsTab: React.FC<{ eraData: MockEraDetails }> = ({ eraData }) => {
 };
 
 // Elections Tab Component
-const ElectionsTab: React.FC<{ eraData: MockEraDetails; chain: string }> = ({ eraData, chain }) => {
+const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraData, chain }) => {
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return '—';
     return new Date(timestamp).toLocaleString();

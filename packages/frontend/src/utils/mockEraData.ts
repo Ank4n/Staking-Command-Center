@@ -6,13 +6,14 @@ export interface ElectionPhase {
   timestamp: number | null;
 }
 
-export interface MockEraDetails {
+export interface EraDetails {
   eraId: number;
   sessionStart: number;
   sessionEnd: number | null;
   startTime: number;
   endTime: number | null;
   sessions: Session[];
+  prevSession?: Session | null; // Previous session (from previous era) for calculating first session's start block
   warnings: Warning[];
   events: BlockchainEvent[];
   isActive: boolean;
@@ -35,11 +36,14 @@ export interface MockEraDetails {
   validatorCount?: number; // Total validators elected
 }
 
+// Legacy name for backward compatibility
+export type MockEraDetails = EraDetails;
+
 /**
  * Generate deterministic mock data for an era
  * Same eraId will always generate the same data
  */
-export function generateMockEraData(eraId: number, currentEraId?: number): MockEraDetails {
+export function generateMockEraData(eraId: number, currentEraId?: number): EraDetails {
   // Seeded random number generator for deterministic results
   const seed = eraId;
   let randomSeed = seed;
