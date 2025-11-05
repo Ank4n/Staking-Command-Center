@@ -422,14 +422,60 @@ export class DatabaseClient {
   }
 
   getEventsByEraAH(eraId: number): BlockchainEvent[] {
-    // Get sessions for this era to determine block range
-    const sessions = this.getSessionsByEra(eraId);
-    if (sessions.length === 0) {
+    // Get era to determine session range
+    const era = this.db.prepare('SELECT session_start, session_end FROM eras WHERE era_id = ?').get(eraId) as
+      { session_start: number; session_end: number | null } | undefined;
+
+    if (!era) {
       return [];
     }
 
-    const startBlock = Math.min(...sessions.map(s => s.blockNumber));
-    const endBlock = Math.max(...sessions.map(s => s.blockNumber));
+    // Calculate block range for the era's active lifetime:
+    // - Start: when previous session ended (when this era's first session started)
+    // - End: when era's last session ended (or use first session if era still active)
+
+    const prevSession = this.db
+      .prepare('SELECT block_number FROM sessions WHERE session_id = ?')
+      .get(era.session_start - 1) as { block_number: number } | undefined;
+
+    const firstSession = this.db
+      .prepare('SELECT block_number FROM sessions WHERE session_id = ?')
+      .get(era.session_start) as { block_number: number } | undefined;
+
+    // Start from previous session's end block, or first session's block if no previous session
+    let startBlock = prevSession?.block_number || firstSession?.block_number || 0;
+
+    if (startBlock === 0) {
+      return [];
+    }
+
+    // If era has ended, use session_end's block. If still active, use current block (query all from start onwards)
+    let endBlock: number;
+    if (era.session_end !== null) {
+      const lastSession = this.db
+        .prepare('SELECT block_number FROM sessions WHERE session_id = ?')
+        .get(era.session_end) as { block_number: number } | undefined;
+      endBlock = lastSession?.block_number || Number.MAX_SAFE_INTEGER;
+    } else {
+      // Era still active, get all events from startBlock onwards
+      endBlock = Number.MAX_SAFE_INTEGER;
+    }
+
+    // Also include blocks where election phases for this era occurred
+    // (Election phases happen BEFORE the era starts, during the previous era)
+    const electionPhases = this.db
+      .prepare('SELECT MIN(block_number) as min_block, MAX(block_number) as max_block FROM election_phases WHERE era_id = ?')
+      .get(eraId) as { min_block: number | null; max_block: number | null } | undefined;
+
+    if (electionPhases?.min_block) {
+      // Expand the range to include election phase blocks (which happened before the era started)
+      startBlock = Math.min(startBlock, electionPhases.min_block);
+    }
+
+    if (electionPhases?.max_block) {
+      // Also extend end block if needed (though election blocks should be before era start)
+      endBlock = Math.max(endBlock, electionPhases.max_block);
+    }
 
     const rows = this.db
       .prepare('SELECT * FROM events_ah WHERE block_number >= ? AND block_number <= ? ORDER BY block_number DESC, id DESC')

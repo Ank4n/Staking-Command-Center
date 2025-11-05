@@ -1,86 +1,25 @@
 version: '3.8'
 
 services:
-  # Polkadot Indexer
-  polkadot-indexer:
-    build: .
-    container_name: scc-polkadot-indexer
-    command: node packages/indexer/dist/index.js
+  staking-polkadot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: staking-polkadot-local
     environment:
-      - CHAIN=polkadot
-      - DB_PATH=/app/data/polkadot.db
-      - MAX_ERAS=100
-      - LOG_LEVEL=info
-    volumes:
-      - polkadot-data:/app/data
-    restart: unless-stopped
-    networks:
-      - scc-network
-
-  # Polkadot API Server
-  polkadot-api:
-    build: .
-    container_name: scc-polkadot-api
-    command: node packages/api/dist/index.js
-    environment:
-      - CHAIN=polkadot
-      - DB_PATH=/app/data/polkadot.db
-      - API_PORT=4000
+      # Matching fly.toml env vars
       - API_HOST=0.0.0.0
+      - API_PORT=4000
+      - CHAIN=polkadot
+      - DB_PATH=/data/staking-polkadot.db
       - LOG_LEVEL=info
+      - MAX_ERAS=100
+      - SYNC_BLOCKS=10
     volumes:
-      - polkadot-data:/app/data
+      - ./data:/data
     ports:
       - "4000:4000"
-    depends_on:
-      - polkadot-indexer
     restart: unless-stopped
-    networks:
-      - scc-network
-
-  # Kusama Indexer
-  kusama-indexer:
-    build: .
-    container_name: scc-kusama-indexer
-    command: node packages/indexer/dist/index.js
-    environment:
-      - CHAIN=kusama
-      - DB_PATH=/app/data/kusama.db
-      - MAX_ERAS=100
-      - LOG_LEVEL=info
-    volumes:
-      - kusama-data:/app/data
-    restart: unless-stopped
-    networks:
-      - scc-network
-
-  # Kusama API Server
-  kusama-api:
-    build: .
-    container_name: scc-kusama-api
-    command: node packages/api/dist/index.js
-    environment:
-      - CHAIN=kusama
-      - DB_PATH=/app/data/kusama.db
-      - API_PORT=4001
-      - API_HOST=0.0.0.0
-      - LOG_LEVEL=info
-    volumes:
-      - kusama-data:/app/data
-    ports:
-      - "4001:4001"
-    depends_on:
-      - kusama-indexer
-    restart: unless-stopped
-    networks:
-      - scc-network
 
 volumes:
   polkadot-data:
-    driver: local
-  kusama-data:
-    driver: local
-
-networks:
-  scc-network:
-    driver: bridge
