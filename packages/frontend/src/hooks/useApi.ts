@@ -293,3 +293,40 @@ export async function fetchElectionPhasesByEra(eraId: number): Promise<any[]> {
   if (!response.ok) throw new Error('Failed to fetch election phases');
   return response.json();
 }
+
+export function useElectionWinners(limit: number = 50) {
+  const [winners, setWinners] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchWinners();
+  }, [limit]);
+
+  const fetchWinners = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/elections/winners?limit=${limit}`);
+      if (!response.ok) throw new Error('Failed to fetch election winners');
+      const data = await response.json();
+      setWinners(data);
+      setLoading(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      setLoading(false);
+    }
+  };
+
+  return { winners, loading, error, refetch: fetchWinners };
+}
+
+export async function fetchMinimumScore(): Promise<string | null> {
+  // This will be queried live from the chain via polkadot.js
+  // For now, return null - will be implemented when we have access to the API
+  return null;
+}
+
+export async function fetchElectionRoundStats(round: number): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/elections/rounds/${round}/stats`);
+  if (!response.ok) throw new Error('Failed to fetch round stats');
+  return response.json();
+}

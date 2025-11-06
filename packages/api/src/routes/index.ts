@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import type { DatabaseClient } from '../database/DatabaseClient';
+import type { ChainQueryService } from '../services/ChainQueryService';
 
-export function createRouter(db: DatabaseClient): Router {
+export function createRouter(db: DatabaseClient, chainQueryService: ChainQueryService): Router {
   const router = Router();
 
   // Health check
@@ -215,6 +216,78 @@ export function createRouter(db: DatabaseClient): Router {
       res.json(phases);
     } catch (error) {
       res.status(500).json({ error: 'Failed to get election phases' });
+    }
+  });
+
+  // ===== ELECTION SCORE ENDPOINTS =====
+
+  // Get all winners (rewarded submissions)
+  router.get('/elections/winners', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const eraId = req.query.eraId ? parseInt(req.query.eraId as string) : null;
+
+      const winners = eraId !== null
+        ? db.getElectionWinnersByEra(eraId)
+        : db.getAllElectionWinners(Math.min(limit, 100));
+
+      res.json(winners);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get election winners' });
+    }
+  });
+
+  // Get winner for a specific round
+  router.get('/elections/rounds/:round/winner', (req, res) => {
+    try {
+      const round = parseInt(req.params.round);
+      const winner = db.getElectionWinnerByRound(round);
+
+      if (!winner) {
+        return res.status(404).json({ error: 'No winner found for this round' });
+      }
+
+      res.json(winner);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get election winner' });
+    }
+  });
+
+  // Get stats for a specific round (submission count + winner)
+  router.get('/elections/rounds/:round/stats', (req, res) => {
+    try {
+      const round = parseInt(req.params.round);
+      const submissionCount = db.getElectionSubmissionCount(round);
+      const winner = db.getElectionWinnerByRound(round);
+
+      res.json({
+        round,
+        submissionCount,
+        winner: winner || null
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get election round stats' });
+    }
+  });
+
+  // Get all scores for a specific round (for debugging)
+  router.get('/elections/rounds/:round/scores', (req, res) => {
+    try {
+      const round = parseInt(req.params.round);
+      const scores = db.getElectionScoresByRound(round);
+      res.json(scores);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get election scores' });
+    }
+  });
+
+  // Get current minimum score from chain
+  router.get('/elections/minimum-score', async (req, res) => {
+    try {
+      const minimumScore = await chainQueryService.queryMinimumScore();
+      res.json({ minimumScore });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get minimum score' });
     }
   });
 

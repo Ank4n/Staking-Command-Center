@@ -539,6 +539,94 @@ export class DatabaseClient {
     }));
   }
 
+  // ===== ELECTION SCORES =====
+
+  getAllElectionWinners(limit: number = 50): any[] {
+    const rows = this.db
+      .prepare('SELECT * FROM election_scores WHERE status = ? ORDER BY round DESC LIMIT ?')
+      .all('rewarded', limit) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      blockNumber: row.block_number,
+      round: row.round,
+      submitter: row.submitter,
+      minimalStake: row.minimal_stake,
+      sumStake: row.sum_stake,
+      sumStakeSquared: row.sum_stake_squared,
+      status: row.status,
+      eraId: row.era_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  getElectionWinnersByEra(eraId: number): any[] {
+    const rows = this.db
+      .prepare('SELECT * FROM election_scores WHERE era_id = ? AND status = ? ORDER BY round DESC')
+      .all(eraId, 'rewarded') as any[];
+    return rows.map(row => ({
+      id: row.id,
+      blockNumber: row.block_number,
+      round: row.round,
+      submitter: row.submitter,
+      minimalStake: row.minimal_stake,
+      sumStake: row.sum_stake,
+      sumStakeSquared: row.sum_stake_squared,
+      status: row.status,
+      eraId: row.era_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  getElectionWinnerByRound(round: number): any | null {
+    const row = this.db
+      .prepare('SELECT * FROM election_scores WHERE round = ? AND status = ? LIMIT 1')
+      .get(round, 'rewarded') as any;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      blockNumber: row.block_number,
+      round: row.round,
+      submitter: row.submitter,
+      minimalStake: row.minimal_stake,
+      sumStake: row.sum_stake,
+      sumStakeSquared: row.sum_stake_squared,
+      status: row.status,
+      eraId: row.era_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  getElectionSubmissionCount(round: number): number {
+    const result = this.db
+      .prepare('SELECT COUNT(*) as count FROM election_scores WHERE round = ?')
+      .get(round) as { count: number };
+    return result.count;
+  }
+
+  getElectionScoresByRound(round: number): any[] {
+    const rows = this.db
+      .prepare('SELECT * FROM election_scores WHERE round = ? ORDER BY created_at ASC')
+      .all(round) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      blockNumber: row.block_number,
+      round: row.round,
+      submitter: row.submitter,
+      minimalStake: row.minimal_stake,
+      sumStake: row.sum_stake,
+      sumStakeSquared: row.sum_stake_squared,
+      status: row.status,
+      eraId: row.era_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
   // ===== STATS =====
 
   getStats() {

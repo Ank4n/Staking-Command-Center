@@ -156,6 +156,30 @@ export class StakingDatabase {
       CREATE INDEX IF NOT EXISTS idx_election_phases_phase ON election_phases(phase);
       CREATE INDEX IF NOT EXISTS idx_election_phases_block ON election_phases(block_number);
 
+      -- Election scores table (for tracking signed submissions)
+      CREATE TABLE IF NOT EXISTS election_scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        block_number INTEGER NOT NULL,
+        round INTEGER NOT NULL,
+        submitter TEXT NOT NULL,
+        minimal_stake TEXT NOT NULL,
+        sum_stake TEXT NOT NULL,
+        sum_stake_squared TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('registered', 'rewarded', 'slashed', 'ejected', 'discarded', 'bailed')),
+        era_id INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(round, submitter),
+        FOREIGN KEY (era_id) REFERENCES eras(era_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_election_scores_status ON election_scores(status);
+      CREATE INDEX IF NOT EXISTS idx_election_scores_era ON election_scores(era_id);
+      CREATE INDEX IF NOT EXISTS idx_election_scores_round ON election_scores(round);
+      CREATE INDEX IF NOT EXISTS idx_election_scores_block ON election_scores(block_number);
+      -- Composite index for queries filtering by era and status (e.g., getElectionWinnersByEra)
+      CREATE INDEX IF NOT EXISTS idx_election_scores_era_status ON election_scores(era_id, status);
+
       -- Indexer state table (for tracking sync progress)
       CREATE TABLE IF NOT EXISTS indexer_state (
         key TEXT PRIMARY KEY,
@@ -803,6 +827,239 @@ export class StakingDatabase {
       queuedSolutionScore: row.queued_solution_score,
       validatorsElected: row.validators_elected,
     };
+  }
+
+  // ===== ELECTION SCORE METHODS =====
+
+  /**
+   * Upsert election score. Creates new row or updates existing row.
+   * Only updates if current status is not a final status (to prevent race conditions).
+   */
+  upsertElectionScore(score: {
+    blockNumber: number;
+    round: number;
+    submitter: string;
+    minimalStake: string;
+    sumStake: string;
+    sumStakeSquared: string;
+    status: string;
+    eraId: number | null;
+  }): void {
+    const now = Date.now();
+
+    // Try to get existing score
+    const existing = this.db.prepare(`
+      SELECT status FROM election_scores WHERE round = ? AND submitter = ?
+    `).get(score.round, score.submitter) as { status: string } | undefined;
+
+    const finalStatuses = ['rewarded', 'slashed', 'ejected', 'discarded', 'bailed'];
+
+    if (existing) {
+      // If existing status is already final, don't update
+      if (finalStatuses.includes(existing.status)) {
+        this.logger.debug(
+          { round: score.round, submitter: score.submitter, existingStatus: existing.status, newStatus: score.status },
+          'Skipping update - existing status is final'
+        );
+        return;
+      }
+
+      // Update existing row
+      // If new scores are '0', only update status (don't overwrite existing scores)
+      const hasRealScores = score.minimalStake !== '0' || score.sumStake !== '0' || score.sumStakeSquared !== '0';
+
+      let stmt;
+      if (hasRealScores) {
+        // Update everything including scores
+        stmt = this.db.prepare(`
+          UPDATE election_scores
+          SET block_number = ?,
+              minimal_stake = ?,
+              sum_stake = ?,
+              sum_stake_squared = ?,
+              status = ?,
+              updated_at = ?
+          WHERE round = ? AND submitter = ?
+        `);
+
+        stmt.run(
+          score.blockNumber,
+          score.minimalStake,
+          score.sumStake,
+          score.sumStakeSquared,
+          score.status,
+          now,
+          score.round,
+          score.submitter
+        );
+      } else {
+        // Only update status and block_number, keep existing scores
+        stmt = this.db.prepare(`
+          UPDATE election_scores
+          SET block_number = ?,
+              status = ?,
+              updated_at = ?
+          WHERE round = ? AND submitter = ?
+        `);
+
+        stmt.run(
+          score.blockNumber,
+          score.status,
+          now,
+          score.round,
+          score.submitter
+        );
+      }
+
+      this.logger.debug(
+        { round: score.round, submitter: score.submitter, status: score.status },
+        'Updated election score'
+      );
+    } else {
+      // Insert new row
+      const stmt = this.db.prepare(`
+        INSERT INTO election_scores (
+          block_number, round, submitter, minimal_stake, sum_stake, sum_stake_squared,
+          status, era_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      stmt.run(
+        score.blockNumber,
+        score.round,
+        score.submitter,
+        score.minimalStake,
+        score.sumStake,
+        score.sumStakeSquared,
+        score.status,
+        score.eraId,
+        now,
+        now
+      );
+
+      this.logger.debug(
+        { round: score.round, submitter: score.submitter, status: score.status, eraId: score.eraId },
+        'Created election score'
+      );
+    }
+  }
+
+  /**
+   * Get all election scores for a specific round
+   */
+  getElectionScoresByRound(round: number): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM election_scores
+      WHERE round = ?
+      ORDER BY created_at ASC
+    `);
+
+    const rows = stmt.all(round) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      blockNumber: row.block_number,
+      round: row.round,
+      submitter: row.submitter,
+      minimalStake: row.minimal_stake,
+      sumStake: row.sum_stake,
+      sumStakeSquared: row.sum_stake_squared,
+      status: row.status,
+      eraId: row.era_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /**
+   * Get winner (rewarded) for a specific round
+   */
+  getElectionWinnerByRound(round: number): any | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM election_scores
+      WHERE round = ? AND status = 'rewarded'
+      LIMIT 1
+    `);
+
+    const row = stmt.get(round) as any;
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      blockNumber: row.block_number,
+      round: row.round,
+      submitter: row.submitter,
+      minimalStake: row.minimal_stake,
+      sumStake: row.sum_stake,
+      sumStakeSquared: row.sum_stake_squared,
+      status: row.status,
+      eraId: row.era_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Get all winners, sorted by round descending
+   */
+  getAllElectionWinners(limit: number = 50): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM election_scores
+      WHERE status = 'rewarded'
+      ORDER BY round DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(limit) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      blockNumber: row.block_number,
+      round: row.round,
+      submitter: row.submitter,
+      minimalStake: row.minimal_stake,
+      sumStake: row.sum_stake,
+      sumStakeSquared: row.sum_stake_squared,
+      status: row.status,
+      eraId: row.era_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /**
+   * Get submission count for a specific round
+   */
+  getElectionSubmissionCount(round: number): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM election_scores WHERE round = ?
+    `);
+    const result = stmt.get(round) as { count: number };
+    return result.count;
+  }
+
+  /**
+   * Get winners by era
+   */
+  getElectionWinnersByEra(eraId: number): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM election_scores
+      WHERE era_id = ? AND status = 'rewarded'
+      ORDER BY round DESC
+    `);
+
+    const rows = stmt.all(eraId) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      blockNumber: row.block_number,
+      round: row.round,
+      submitter: row.submitter,
+      minimalStake: row.minimal_stake,
+      sumStake: row.sum_stake,
+      sumStakeSquared: row.sum_stake_squared,
+      status: row.status,
+      eraId: row.era_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   getAllElectionPhases(limit: number = 100): any[] {

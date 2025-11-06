@@ -666,6 +666,12 @@ export class Indexer {
     if (eventType.toLowerCase() === 'staking.erapaid') {
       await this.handleEraPaid(event, blockNumber);
     }
+
+    // Look for multiBlockElectionSigned events for election scores
+    const lowerEventType = eventType.toLowerCase();
+    if (lowerEventType.startsWith('multiblockelectionsigned.')) {
+      await this.handleElectionScoreEvent(event, eventType, blockNumber);
+    }
   }
 
   /**
@@ -1107,6 +1113,152 @@ export class Indexer {
 
     } catch (error) {
       this.logger.error({ error, blockNumber, eventType: 'EraPaid' }, 'Error handling EraPaid event');
+    }
+  }
+
+  /**
+   * Handle MultiBlockElectionSigned events for election scores
+   * Handles: Registered, Rewarded, Slashed, Ejected, Discarded, Bailed
+   */
+  private async handleElectionScoreEvent(event: any, eventType: string, blockNumber: number): Promise<void> {
+    try {
+      // Extract event name from eventType (e.g., "MultiBlockElectionSigned.Registered")
+      const parts = eventType.split('.');
+      const eventName = parts[parts.length - 1].toLowerCase();
+
+      // Map event names to status
+      const statusMap: { [key: string]: string } = {
+        'registered': 'registered',
+        'rewarded': 'rewarded',
+        'slashed': 'slashed',
+        'ejected': 'ejected',
+        'discarded': 'discarded',
+        'bailed': 'bailed',
+      };
+
+      const status = statusMap[eventName];
+      if (!status) {
+        // Not an event we care about
+        return;
+      }
+
+      this.logger.info({ blockNumber, eventType, status }, 'Processing election score event');
+
+      // Parse event data based on event type
+      // Reference: https://github.com/paritytech/polkadot-sdk/blob/master/substrate/frame/election-provider-multi-block/src/signed/mod.rs#L748
+
+      let round: number | null = null;
+      let submitter: string | null = null;
+      let minimalStake: string | null = null;
+      let sumStake: string | null = null;
+      let sumStakeSquared: string | null = null;
+
+      if (eventName === 'registered') {
+        // Registered event: (round, who, score) - stored as array
+        // Try positional access first (for stored events), then named properties (for live events)
+        if (event.data[0] !== undefined) {
+          round = event.data[0].toNumber ? event.data[0].toNumber() : parseInt(event.data[0]);
+        } else if (event.data.round !== undefined) {
+          round = event.data.round.toNumber ? event.data.round.toNumber() : event.data.round;
+        }
+
+        if (event.data[1] !== undefined) {
+          submitter = event.data[1].toString ? event.data[1].toString() : event.data[1];
+        } else if (event.data.submission?.who !== undefined) {
+          submitter = event.data.submission.who.toString();
+        }
+
+        // Extract score from data[2] or submission.score
+        const score = event.data[2] || event.data.submission?.score;
+        if (score) {
+          minimalStake = score.minimalStake ? score.minimalStake.toString() : '0';
+          sumStake = score.sumStake ? score.sumStake.toString() : '0';
+          sumStakeSquared = score.sumStakeSquared ? score.sumStakeSquared.toString() : '0';
+
+          // Warn if all scores are zero (possible parsing error)
+          if (minimalStake === '0' && sumStake === '0' && sumStakeSquared === '0') {
+            this.logger.warn({
+              blockNumber,
+              round,
+              submitter: submitter?.substring(0, 10) + '...'
+            }, 'Registered event with all zero scores - possible parsing error');
+          }
+        }
+      } else {
+        // Other events: (round, submitter, ...) or (round, submitter)
+        // Try named properties first, then fall back to positional
+        if (event.data.round !== undefined) {
+          round = event.data.round.toNumber ? event.data.round.toNumber() : event.data.round;
+        } else if (event.data[0] !== undefined) {
+          round = event.data[0].toNumber ? event.data[0].toNumber() : event.data[0];
+        }
+
+        if (event.data.submitter !== undefined) {
+          submitter = event.data.submitter.toString ? event.data.submitter.toString() : event.data.submitter;
+        } else if (event.data[1] !== undefined) {
+          submitter = event.data[1].toString ? event.data[1].toString() : event.data[1];
+        }
+
+        // For non-registered events, we might not have score data
+        // The upsert will only update status if the row already exists
+        minimalStake = '0';
+        sumStake = '0';
+        sumStakeSquared = '0';
+      }
+
+      this.logger.info({
+        blockNumber,
+        eventType,
+        round,
+        submitter: submitter?.substring(0, 10) + '...',
+        hasScores: !!(minimalStake && sumStake && sumStakeSquared),
+        minimalStake,
+        sumStake
+      }, 'Parsed election score event data');
+
+      if (round === null || submitter === null) {
+        this.logger.warn({ blockNumber, eventType, round, submitter }, 'Missing round or submitter');
+        return;
+      }
+
+      // Query activeEra to tie this score to an era
+      let eraId: number | null = null;
+      try {
+        // Query at block n-1 to get the era at the time of the event
+        const blockHash = await this.apiAH.rpc.chain.getBlockHash(blockNumber);
+        const apiAt = await this.apiAH.at(blockHash);
+        const activeEraOption = await apiAt.query.staking?.activeEra?.();
+
+        if (activeEraOption && !activeEraOption.isEmpty) {
+          const activeEra = (activeEraOption as any).toJSON();
+          eraId = activeEra?.index || null;
+        }
+      } catch (error) {
+        this.logger.error({ error, blockNumber }, 'Error querying activeEra for election score');
+      }
+
+      // Upsert election score
+      this.db.upsertElectionScore({
+        blockNumber,
+        round,
+        submitter,
+        minimalStake: minimalStake || '0',
+        sumStake: sumStake || '0',
+        sumStakeSquared: sumStakeSquared || '0',
+        status,
+        eraId,
+      });
+
+      this.logger.info({
+        round,
+        submitter: submitter.substring(0, 10) + '...',
+        status,
+        eraId,
+        blockNumber
+      }, `Election score ${status}`);
+
+    } catch (error) {
+      this.logger.error({ error, blockNumber, eventType }, 'Error handling election score event');
     }
   }
 

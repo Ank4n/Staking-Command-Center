@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useStatus, fetchElectionPhasesByEra } from '../hooks/useApi';
+import { useStatus, fetchElectionPhasesByEra, fetchElectionRoundStats } from '../hooks/useApi';
 import { generateMockEraData, type EraDetails } from '../utils/mockEraData';
 import { formatEventData } from '../utils/eventFormatters';
 import type { Era, Session, Warning, BlockchainEvent } from '@staking-cc/shared';
@@ -885,6 +885,9 @@ const WarningsTab: React.FC<{ eraData: EraDetails }> = ({ eraData }) => {
 
 // Elections Tab Component
 const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraData, chain }) => {
+  const [roundStats, setRoundStats] = useState<any>(null);
+  const [loadingRoundStats, setLoadingRoundStats] = useState(false);
+
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return '—';
     return new Date(timestamp).toLocaleString();
@@ -895,11 +898,50 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
     return value.toLocaleString();
   };
 
+  const formatBigNumber = (value: string): string => {
+    try {
+      const num = BigInt(value);
+      const divisor = BigInt(10 ** 12); // Convert from planck to KSM/DOT
+      const result = Number(num / divisor);
+      return result.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    } catch {
+      return value;
+    }
+  };
+
+  const shortenAddress = (address: string): string => {
+    if (address.length < 16) return address;
+    return `${address.slice(0, 8)}...${address.slice(-8)}`;
+  };
+
   // Check if we have real election data
   const hasRealElectionData = eraData.electionPhasesRaw && eraData.electionPhasesRaw.length > 0;
 
   // Check if election has started
   const electionStarted = eraData.electionPhases.snapshot.started;
+
+  // Fetch round stats if we have election data
+  useEffect(() => {
+    if (!hasRealElectionData) return;
+
+    const fetchRoundStats = async () => {
+      try {
+        // Find the round number from election phases
+        const snapshotPhase = eraData.electionPhasesRaw?.find((p: any) => p.phase === 'Snapshot');
+        if (!snapshotPhase || snapshotPhase.round === null || snapshotPhase.round === undefined) return;
+
+        setLoadingRoundStats(true);
+        const stats = await fetchElectionRoundStats(snapshotPhase.round);
+        setRoundStats(stats);
+      } catch (error) {
+        console.error('Failed to fetch round stats:', error);
+      } finally {
+        setLoadingRoundStats(false);
+      }
+    };
+
+    fetchRoundStats();
+  }, [hasRealElectionData, eraData.electionPhasesRaw]);
 
   // Build stages from real data if available, otherwise use mock structure
   const stages = hasRealElectionData
@@ -917,7 +959,7 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
           }
         };
 
-        const details: Array<{ label: string; value: string }> = [];
+        const details: Array<{ label: string; value: string | JSX.Element }> = [];
 
         // Add phase-specific details
         if (phase.phase === 'Snapshot') {
@@ -929,6 +971,38 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
           }
           // Min Nominator Bond is not yet implemented
           details.push({ label: 'Min Nominator Bond', value: '— (not tracked)' });
+        }
+
+        // Add submission count for Signed phase
+        if (phase.phase === 'Signed' && roundStats) {
+          details.push({ label: 'Submissions', value: formatCount(roundStats.submissionCount) });
+        }
+
+        // Add winner info for SignedValidation phase
+        if (phase.phase === 'SignedValidation' && roundStats) {
+          if (roundStats.winner) {
+            details.push({
+              label: 'Winner',
+              value: `${shortenAddress(roundStats.winner.submitter)} ⭐`
+            });
+            details.push({
+              label: 'Minimal Stake',
+              value: `${formatBigNumber(roundStats.winner.minimalStake)}`
+            });
+            details.push({
+              label: 'Sum Stake',
+              value: `${formatBigNumber(roundStats.winner.sumStake)}`
+            });
+            details.push({
+              label: 'Sum² Stake',
+              value: `${formatBigNumber(roundStats.winner.sumStakeSquared)}`
+            });
+          } else if (!loadingRoundStats && roundStats.submissionCount > 0) {
+            details.push({
+              label: 'Winner',
+              value: 'No winner (all submissions rejected)'
+            });
+          }
         }
 
         return {

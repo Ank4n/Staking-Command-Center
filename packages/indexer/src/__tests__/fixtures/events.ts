@@ -159,6 +159,133 @@ function createMockPhase(phase: string) {
 }
 
 /**
+ * Creates a mock polkadot-js event for MultiBlockElectionSigned events
+ * Supports: Registered, Rewarded, Slashed, Ejected, Discarded, Bailed
+ */
+export function createMockElectionScoreEvent(params: {
+  eventName: string;
+  round: number;
+  submitter: string;
+  score?: {
+    minimalStake: string;
+    sumStake: string;
+    sumStakeSquared: string;
+  };
+  useArrayFormat?: boolean; // If true, use array format for data (as stored in DB)
+}) {
+  const eventName = params.eventName.toLowerCase();
+
+  // For Registered event, include score data
+  if (eventName === 'registered') {
+    if (params.useArrayFormat) {
+      // Array format: [round, submitter, score]
+      return {
+        section: 'multiBlockElectionSigned',
+        method: 'Registered',
+        data: [
+          createMockCodec(params.round),
+          { toString: () => params.submitter },
+          params.score ? {
+            minimalStake: params.score.minimalStake,
+            sumStake: params.score.sumStake,
+            sumStakeSquared: params.score.sumStakeSquared,
+          } : undefined,
+        ],
+        toHuman: () => ({
+          method: 'Registered',
+          section: 'multiBlockElectionSigned',
+          data: [params.round, params.submitter, params.score],
+        }),
+        toJSON: () => ({
+          round: params.round,
+          submitter: params.submitter,
+          score: params.score,
+        }),
+      };
+    }
+
+    // Named property format
+    return {
+      section: 'multiBlockElectionSigned',
+      method: 'Registered',
+      data: {
+        round: createMockCodec(params.round),
+        submission: {
+          who: { toString: () => params.submitter },
+          score: params.score ? {
+            minimalStake: params.score.minimalStake,
+            sumStake: params.score.sumStake,
+            sumStakeSquared: params.score.sumStakeSquared,
+          } : undefined,
+        },
+      },
+      toHuman: () => ({
+        method: 'Registered',
+        section: 'multiBlockElectionSigned',
+        data: {
+          round: params.round,
+          submission: {
+            who: params.submitter,
+            score: params.score,
+          },
+        },
+      }),
+      toJSON: () => ({
+        round: params.round,
+        submission: {
+          who: params.submitter,
+          score: params.score,
+        },
+      }),
+    };
+  }
+
+  // For other events (Rewarded, Slashed, etc.), format is: (round, submitter, ...)
+  if (params.useArrayFormat) {
+    // Array format: [round, submitter, ...]
+    return {
+      section: 'multiBlockElectionSigned',
+      method: params.eventName,
+      data: [
+        createMockCodec(params.round),
+        { toString: () => params.submitter },
+      ],
+      toHuman: () => ({
+        method: params.eventName,
+        section: 'multiBlockElectionSigned',
+        data: [params.round, params.submitter],
+      }),
+      toJSON: () => ({
+        round: params.round,
+        submitter: params.submitter,
+      }),
+    };
+  }
+
+  // Named property format
+  return {
+    section: 'multiBlockElectionSigned',
+    method: params.eventName,
+    data: {
+      round: createMockCodec(params.round),
+      submitter: { toString: () => params.submitter },
+    },
+    toHuman: () => ({
+      method: params.eventName,
+      section: 'multiBlockElectionSigned',
+      data: {
+        round: params.round,
+        submitter: params.submitter,
+      },
+    }),
+    toJSON: () => ({
+      round: params.round,
+      submitter: params.submitter,
+    }),
+  };
+}
+
+/**
  * Creates a mock API instance at a specific block
  */
 export function createMockApiAt(overrides: {

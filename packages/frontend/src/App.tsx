@@ -166,7 +166,7 @@ function App() {
 
         {activeTab === 'elections' && (
           <div className="section">
-            <h2 className="section-title">Elections</h2>
+            <h2 className="section-title">Election Scores</h2>
             <ElectionsTab />
           </div>
         )}

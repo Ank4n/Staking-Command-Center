@@ -6,6 +6,7 @@ import pinoHttp from 'pino-http';
 import { DatabaseClient } from './database/DatabaseClient';
 import { createRouter } from './routes';
 import { WebSocketManager } from './websocket/WebSocketManager';
+import { ChainQueryService } from './services/ChainQueryService';
 import logger from './utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -37,6 +38,7 @@ dotenv.config({ path: path.join(projectRoot, '.env') });
 const API_PORT = parseInt(process.env.API_PORT || '4000', 10);
 const API_HOST = process.env.API_HOST || '0.0.0.0';
 const CHAIN = process.env.CHAIN || 'kusama';
+const RPC_ENDPOINT_AH = process.env.RPC_ENDPOINT_AH || 'wss://kusama-asset-hub-rpc.polkadot.io';
 
 // Resolve DB path relative to project root
 // Use chain-specific database file (same as indexer)
@@ -80,6 +82,14 @@ async function main() {
     const db = new DatabaseClient(DB_PATH);
     logger.info({ dbPath: DB_PATH }, 'Database client initialized');
 
+    // Initialize chain query service
+    const chainQueryService = new ChainQueryService(RPC_ENDPOINT_AH, logger);
+    try {
+      await chainQueryService.connect();
+    } catch (error) {
+      logger.warn({ error }, 'Failed to connect to chain, some features may be unavailable');
+    }
+
     // Create Express app
     const app = express();
 
@@ -89,7 +99,7 @@ async function main() {
     app.use(pinoHttp({ logger }));
 
     // API routes
-    const apiRouter = createRouter(db);
+    const apiRouter = createRouter(db, chainQueryService);
     app.use('/api', apiRouter);
 
     // Serve frontend static files (production mode)
@@ -142,6 +152,7 @@ async function main() {
 
       try {
         wsManager.stop();
+        await chainQueryService.disconnect();
         db.close();
         httpServer.close(() => {
           logger.info('Server closed');
