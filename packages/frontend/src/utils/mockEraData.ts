@@ -156,32 +156,8 @@ export function generateMockEraData(eraId: number, currentEraId?: number): EraDe
   // Sort events by block number
   events.sort((a, b) => b.blockNumber - a.blockNumber);
 
-  // Generate warnings (0-2 random warnings)
+  // No mock warnings - warnings come from real blockchain analysis only
   const warnings: Warning[] = [];
-  const warningCount = Math.floor(seededRandom() * 3); // 0-2 warnings
-
-  const warningTypes: Array<{ type: 'timing' | 'missing_event' | 'unexpected_event'; severity: 'info' | 'warning' | 'error'; message: string }> = [
-    { type: 'timing', severity: 'warning', message: 'Era duration exceeded expected length by 2 hours' },
-    { type: 'missing_event', severity: 'error', message: 'SessionReportReceived event not detected for session ' + (sessionStart + 2) },
-    { type: 'unexpected_event', severity: 'info', message: 'Unexpected ForceEra event detected during era' },
-  ];
-
-  for (let i = 0; i < warningCount; i++) {
-    const warningTemplate = warningTypes[i % warningTypes.length];
-    const sessionIndex = Math.floor(seededRandom() * sessionCount);
-    const blockNumber = 11500000 + ((sessionStart + sessionIndex) * 100);
-
-    warnings.push({
-      id: eraId * 100 + i,
-      eraId,
-      sessionId: sessionStart + sessionIndex,
-      blockNumber,
-      type: warningTemplate.type,
-      message: warningTemplate.message,
-      severity: warningTemplate.severity,
-      timestamp: startTime + (sessionIndex * fourHours) + Math.floor(seededRandom() * fourHours),
-    });
-  }
 
   // Election data - election starts in last session (or second-to-last for active eras)
   const electionStartSessionIndex = isActive && sessionCount > 1 ? sessionCount - 2 : sessionCount - 1;
