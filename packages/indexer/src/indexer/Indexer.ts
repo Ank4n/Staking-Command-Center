@@ -661,6 +661,11 @@ export class Indexer {
     if (eventType.toLowerCase() === 'multiblockelection.phasetransitioned') {
       await this.handlePhaseTransitioned(event, blockNumber, blockTimestamp);
     }
+
+    // Look for staking.EraPaid event (Asset Hub)
+    if (eventType.toLowerCase() === 'staking.erapaid') {
+      await this.handleEraPaid(event, blockNumber);
+    }
   }
 
   /**
@@ -1064,6 +1069,44 @@ export class Indexer {
 
     } catch (error) {
       this.logger.error({ error, blockNumber, eventType: 'PhaseTransitioned' }, 'Error handling PhaseTransitioned');
+    }
+  }
+
+  /**
+   * Handle EraPaid event to update era inflation data
+   */
+  private async handleEraPaid(event: any, blockNumber: number): Promise<void> {
+    this.logger.info({ blockNumber }, 'Processing EraPaid event');
+
+    try {
+      // Extract fields from event
+      // Event structure: { eraIndex, validatorPayout, remainder }
+      const eraIndex = event.data.eraIndex ? event.data.eraIndex.toNumber() : null;
+      const validatorPayout = event.data.validatorPayout ? event.data.validatorPayout.toString() : '0';
+      const remainder = event.data.remainder ? event.data.remainder.toString() : '0';
+
+      if (eraIndex === null) {
+        this.logger.warn({ blockNumber }, 'EraPaid missing eraIndex');
+        return;
+      }
+
+      // Calculate total inflation
+      const validatorBigInt = BigInt(validatorPayout);
+      const remainderBigInt = BigInt(remainder);
+      const totalInflation = (validatorBigInt + remainderBigInt).toString();
+
+      // Update era inflation data
+      this.db.updateEraInflation(eraIndex, totalInflation, validatorPayout, remainder);
+
+      this.logger.info({
+        eraIndex,
+        totalInflation,
+        validatorPayout,
+        treasury: remainder
+      }, 'Updated era inflation from EraPaid event');
+
+    } catch (error) {
+      this.logger.error({ error, blockNumber, eventType: 'EraPaid' }, 'Error handling EraPaid event');
     }
   }
 

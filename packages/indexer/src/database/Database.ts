@@ -513,7 +513,7 @@ export class StakingDatabase {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(era_id) DO UPDATE SET
         session_start = excluded.session_start,
-        session_end = COALESCE(excluded.session_end, session_end),
+        session_end = excluded.session_end,
         start_time = excluded.start_time,
         inflation_total = COALESCE(excluded.inflation_total, inflation_total),
         inflation_validators = COALESCE(excluded.inflation_validators, inflation_validators),
