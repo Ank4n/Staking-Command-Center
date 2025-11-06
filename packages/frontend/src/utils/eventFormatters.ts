@@ -25,6 +25,65 @@ export function formatLargeNumber(planckStr: string, decimals: number = 10): str
 }
 
 /**
+ * Format election score values consistently across the app
+ * Example input: "11624064332175367" (Planck units)
+ * Example output: "1.16 MDOT"
+ *
+ * @param planckStr - The Planck value as string
+ * @param decimals - Number of decimal places (10 for DOT/KSM)
+ * @param tokenSymbol - Token symbol (DOT or KSM)
+ * @returns Formatted string in millions or base tokens
+ */
+export function formatElectionScore(
+  planckStr: string,
+  decimals: number = 10,
+  tokenSymbol: string = 'DOT'
+): string {
+  const planck = BigInt(planckStr.replace(/,/g, ''));
+  const tokens = Number(planck) / Math.pow(10, decimals);
+
+  // Handle zero case
+  if (tokens === 0) return '0';
+
+  // For numbers >= 1000, show in millions with M notation
+  if (tokens >= 1_000) {
+    const millions = (tokens / 1_000_000).toFixed(2);
+    return `${millions} M${tokenSymbol}`;
+  }
+
+  // For small numbers, just show the value
+  return `${tokens.toFixed(2)} ${tokenSymbol}`;
+}
+
+/**
+ * Format election score for Sum Stake Squared (very large numbers)
+ * Uses scientific notation for readability
+ * Example: "118616645086358894878637322395869800" -> "1.18e25 DOT"
+ *
+ * @param planckStr - The Planck value as string
+ * @param decimals - Number of decimal places (10 for DOT/KSM)
+ * @param tokenSymbol - Token symbol (DOT or KSM)
+ * @returns Formatted string with scientific notation
+ */
+export function formatElectionScoreSquared(
+  planckStr: string,
+  decimals: number = 10,
+  tokenSymbol: string = 'DOT'
+): string {
+  const planck = BigInt(planckStr.replace(/,/g, ''));
+  const tokens = Number(planck) / Math.pow(10, decimals);
+
+  // Handle zero case
+  if (tokens === 0) return '0';
+
+  // Always use scientific notation for squared values
+  const exp = Math.floor(Math.log10(tokens));
+  const mantissa = tokens / Math.pow(10, exp);
+
+  return `${mantissa.toFixed(2)}e${exp} ${tokenSymbol}`;
+}
+
+/**
  * Format blockchain event data based on event type
  * Extracts meaningful information from event data and presents it in human-readable format
  *
@@ -42,7 +101,8 @@ export function formatEventData(eventType: string, eventData: string): string {
     if (eventType.includes('SessionReportReceived')) {
       const parts: string[] = [];
       if (data.endIndex) parts.push(`Ended Session: ${data.endIndex}`);
-      if (data.activationTimestamp && Array.isArray(data.activationTimestamp)) {
+      // Only show activation timestamp if it exists and has actual data (not null/empty)
+      if (data.activationTimestamp && Array.isArray(data.activationTimestamp) && data.activationTimestamp.length > 0 && data.activationTimestamp[1] !== null) {
         parts.push(`New Era: ${data.activationTimestamp[1]}`);
       }
       if (data.validatorPointsCounts) parts.push(`Validators: ${data.validatorPointsCounts}`);
@@ -96,17 +156,17 @@ export function formatEventData(eventType: string, eventData: string): string {
         const round = data[0];
         const score = data[2];
         const parts: string[] = [];
-        parts.push(`R${round}`);
+        parts.push(`Round ${round}`);
 
         if (score) {
           if (score.minimalStake) {
-            parts.push(`Min: ${formatLargeNumber(score.minimalStake)}`);
+            parts.push(`Min: ${formatElectionScore(score.minimalStake)}`);
           }
           if (score.sumStake) {
-            parts.push(`Sum: ${formatLargeNumber(score.sumStake)}`);
+            parts.push(`Sum: ${formatElectionScore(score.sumStake)}`);
           }
           if (score.sumStakeSquared) {
-            parts.push(`SumSq: ${formatLargeNumber(score.sumStakeSquared)}`);
+            parts.push(`Sum²: ${formatElectionScoreSquared(score.sumStakeSquared)}`);
           }
         }
 
@@ -166,13 +226,13 @@ export function formatEventData(eventType: string, eventData: string): string {
 
         if (score) {
           if (score.minimalStake) {
-            parts.push(`Min: ${formatLargeNumber(score.minimalStake)}`);
+            parts.push(`Min: ${formatElectionScore(score.minimalStake)}`);
           }
           if (score.sumStake) {
-            parts.push(`Sum: ${formatLargeNumber(score.sumStake)}`);
+            parts.push(`Sum: ${formatElectionScore(score.sumStake)}`);
           }
           if (score.sumStakeSquared) {
-            parts.push(`SumSq: ${formatLargeNumber(score.sumStakeSquared)}`);
+            parts.push(`Sum²: ${formatElectionScoreSquared(score.sumStakeSquared)}`);
           }
         }
 

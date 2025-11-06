@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useElectionWinners } from '../hooks/useApi';
-import { formatLargeNumber } from '../utils/eventFormatters';
+import { formatElectionScore, formatElectionScoreSquared } from '../utils/eventFormatters';
 
 export const ElectionsTab: React.FC = () => {
   const { winners, loading, error } = useElectionWinners(20);
@@ -30,9 +30,9 @@ export const ElectionsTab: React.FC = () => {
         const score = JSON.parse(data.minimumScore);
         // Format as: Min: X | Sum: Y | Sum²: Z
         const formatted = [
-          `Min: ${formatLargeNumber(score.minimalStake)}`,
-          `Sum: ${formatLargeNumber(score.sumStake)}`,
-          `Sum²: ${formatLargeNumber(score.sumStakeSquared)}`
+          `Min: ${formatElectionScore(score.minimalStake)}`,
+          `Sum: ${formatElectionScore(score.sumStake)}`,
+          `Sum²: ${formatElectionScoreSquared(score.sumStakeSquared)}`
         ].join(' | ');
         setMinimumScore(formatted);
         setMinScoreFetched(true);
@@ -147,10 +147,10 @@ export const ElectionsTab: React.FC = () => {
                     {shortenAddress(winner.submitter)}
                   </span>
                 </td>
-                <td>{formatLargeNumber(winner.minimalStake)}</td>
-                <td>{formatLargeNumber(winner.sumStake)}</td>
+                <td>{formatElectionScore(winner.minimalStake)}</td>
+                <td>{formatElectionScore(winner.sumStake)}</td>
                 <td>
-                  {formatLargeNumber(winner.sumStakeSquared)}
+                  {formatElectionScoreSquared(winner.sumStakeSquared)}
                 </td>
                 <td>#{winner.blockNumber.toLocaleString()}</td>
               </tr>

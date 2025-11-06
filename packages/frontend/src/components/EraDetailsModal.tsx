@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useStatus, fetchElectionPhasesByEra, fetchElectionRoundStats } from '../hooks/useApi';
 import { generateMockEraData, type EraDetails } from '../utils/mockEraData';
-import { formatEventData } from '../utils/eventFormatters';
+import { formatEventData, formatElectionScore, formatElectionScoreSquared } from '../utils/eventFormatters';
 import type { Era, Session, Warning, BlockchainEvent } from '@staking-cc/shared';
 
 interface EraDetailsModalProps {
@@ -898,16 +898,7 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
     return value.toLocaleString();
   };
 
-  const formatBigNumber = (value: string): string => {
-    try {
-      const num = BigInt(value);
-      const divisor = BigInt(10 ** 12); // Convert from planck to KSM/DOT
-      const result = Number(num / divisor);
-      return result.toLocaleString(undefined, { maximumFractionDigits: 0 });
-    } catch {
-      return value;
-    }
-  };
+  // Removed formatBigNumber - now using formatElectionScore from utils
 
   const shortenAddress = (address: string): string => {
     if (address.length < 16) return address;
@@ -987,15 +978,15 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
             });
             details.push({
               label: 'Minimal Stake',
-              value: `${formatBigNumber(roundStats.winner.minimalStake)}`
+              value: formatElectionScore(roundStats.winner.minimalStake)
             });
             details.push({
               label: 'Sum Stake',
-              value: `${formatBigNumber(roundStats.winner.sumStake)}`
+              value: formatElectionScore(roundStats.winner.sumStake)
             });
             details.push({
               label: 'Sum² Stake',
-              value: `${formatBigNumber(roundStats.winner.sumStakeSquared)}`
+              value: formatElectionScoreSquared(roundStats.winner.sumStakeSquared)
             });
           } else if (!loadingRoundStats && roundStats.submissionCount > 0) {
             details.push({
