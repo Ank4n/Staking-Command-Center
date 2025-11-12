@@ -908,40 +908,62 @@ export class Indexer {
 
     try {
       // Get phase transition info
-      // Extract phase names properly (handle enum variants with associated data)
-      const extractPhaseName = (phaseData: any): string => {
-        if (!phaseData) return '';
+      // Extract phase names and duration from phase data
+      // Phase enum variants can be:
+      // - Off: no data
+      // - Snapshot(PageIndex): page index
+      // - Signed(BlockNumber): blocks remaining
+      // - SignedValidation(BlockNumber): blocks remaining
+      // - Unsigned(BlockNumber): blocks remaining
+      // - Done: no data
+      // - Export(PageIndex): page index
+      // - Emergency: no data
+      const extractPhaseInfo = (phaseData: any): { name: string; duration: number | null } => {
+        if (!phaseData) return { name: '', duration: null };
 
         // If it's an enum type, check for .type property
         if (phaseData.type) {
-          return phaseData.type;
+          return { name: phaseData.type, duration: null };
         }
 
         // If it's already a string, use it
         if (typeof phaseData === 'string') {
-          return phaseData;
+          return { name: phaseData, duration: null };
         }
 
-        // If toString gives us JSON like {"export":14}, extract the key
+        // If toString gives us JSON like {"Signed":150} or {"Snapshot":32}, extract both key and value
         const str = phaseData.toString();
         if (str.startsWith('{')) {
           try {
             const parsed = JSON.parse(str);
             const keys = Object.keys(parsed);
             if (keys.length > 0) {
+              const key = keys[0];
+              const value = parsed[key];
               // Capitalize first letter
-              return keys[0].charAt(0).toUpperCase() + keys[0].slice(1);
+              const name = key.charAt(0).toUpperCase() + key.slice(1);
+              // Extract duration if it's a number (for Signed, SignedValidation, Unsigned phases)
+              // For Snapshot/Export, the value is a page index, not duration
+              const duration = (key.toLowerCase() === 'signed' ||
+                               key.toLowerCase() === 'signedvalidation' ||
+                               key.toLowerCase() === 'unsigned') &&
+                               typeof value === 'number' ? value : null;
+              return { name, duration };
             }
           } catch (e) {
             // Fall through
           }
         }
 
-        return str;
+        return { name: str, duration: null };
       };
 
-      const fromPhase = extractPhaseName(event.data.from);
-      const toPhase = extractPhaseName(event.data.to);
+      const fromPhaseInfo = extractPhaseInfo(event.data.from);
+      const toPhaseInfo = extractPhaseInfo(event.data.to);
+
+      const fromPhase = fromPhaseInfo.name;
+      const toPhase = toPhaseInfo.name;
+      const expectedDurationBlocks = toPhaseInfo.duration;
 
       this.logger.info({ fromPhase, toPhase, blockNumber }, 'Phase transition detected');
 
@@ -989,7 +1011,16 @@ export class Indexer {
         blockNumber,
         eventId,
         timestamp: blockTimestamp,
+        expectedDurationBlocks,
+        status: 'ongoing', // New phase starts as ongoing
       };
+
+      this.logger.info({
+        phase: toPhase,
+        expectedDurationBlocks,
+        eraId,
+        round: roundNumber
+      }, 'New phase starting');
 
       // Query phase-specific data
       if (toPhase === 'Snapshot') {
@@ -1068,9 +1099,15 @@ export class Indexer {
           message: 'Era does not exist yet, skipping election phase insert. Will be populated when era is created.'
         }, 'Skipping election phase - era not found');
       } else {
-        // Insert election phase
+        // Mark previous phase as completed (if transitioning from a tracked phase)
+        if (fromPhase && fromPhase !== 'Off') {
+          this.db.markPreviousPhaseCompleted(eraId, roundNumber, fromPhase);
+          this.logger.info({ phase: fromPhase, eraId, round: roundNumber }, 'Marked previous phase as completed');
+        }
+
+        // Insert new election phase
         this.db.insertElectionPhase(phaseData);
-        this.logger.info({ phase: toPhase, eraId, round: roundNumber }, 'Inserted election phase');
+        this.logger.info({ phase: toPhase, eraId, round: roundNumber, expectedDurationBlocks }, 'Inserted election phase');
       }
 
     } catch (error) {

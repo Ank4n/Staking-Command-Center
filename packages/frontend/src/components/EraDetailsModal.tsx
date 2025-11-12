@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useStatus, fetchElectionPhasesByEra, fetchElectionRoundStats } from '../hooks/useApi';
 import { generateMockEraData, type EraDetails } from '../utils/mockEraData';
 import { formatEventData, formatElectionScore, formatElectionScoreSquared } from '../utils/eventFormatters';
@@ -18,18 +18,16 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [loading, setLoading] = useState(true);
   const [eraData, setEraData] = useState<EraDetails | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const { status } = useStatus();
 
-  useEffect(() => {
+  const fetchEraData = useCallback(async () => {
     if (!eraId) return;
 
-    // Fetch real data from API
     setLoading(true);
-
-    const fetchEraData = async () => {
-      try {
-        // First fetch era to get sessionStart
-        const eraRes = await fetch(`${API_BASE_URL}/api/eras/${eraId}`);
+    try {
+      // First fetch era to get sessionStart
+      const eraRes = await fetch(`${API_BASE_URL}/api/eras/${eraId}`);
         if (!eraRes.ok) throw new Error('Failed to fetch era');
         const era: Era = await eraRes.json();
 
@@ -148,19 +146,20 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
           validatorCount: validatorCount,
         };
 
-        setEraData(mergedData);
-        setLoading(false);
-      } catch (error) {
-        console.error('Failed to fetch era data:', error);
-        // Fallback to mock data on error
-        const mockData = generateMockEraData(eraId, status?.currentEra || undefined);
-        setEraData(mockData);
-        setLoading(false);
-      }
-    };
-
-    fetchEraData();
+      setEraData(mergedData);
+      setLoading(false);
+    } catch (error) {
+      console.error('Failed to fetch era data:', error);
+      // Fallback to mock data on error
+      const mockData = generateMockEraData(eraId, status?.currentEra || undefined);
+      setEraData(mockData);
+      setLoading(false);
+    }
   }, [eraId, status?.currentEra, status?.currentSession]);
+
+  useEffect(() => {
+    fetchEraData();
+  }, [fetchEraData, refreshTrigger]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -174,6 +173,10 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
 
   const handleOverlayClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
+  };
+
+  const handleRefreshData = () => {
+    setRefreshTrigger(prev => prev + 1);
   };
 
   const tabs = [
@@ -239,7 +242,7 @@ export const EraDetailsModal: React.FC<EraDetailsModalProps> = ({ eraId, onClose
               {activeTab === 'sessions' && <SessionsTab eraData={eraData} />}
               {activeTab === 'events' && <EventsTab eraData={eraData} chain={status?.chain || 'unknown'} />}
               {activeTab === 'warnings' && <WarningsTab eraData={eraData} />}
-              {activeTab === 'elections' && <ElectionsTab eraData={eraData} chain={status?.chain || 'unknown'} />}
+              {activeTab === 'elections' && <ElectionsTab eraData={eraData} chain={status?.chain || 'unknown'} onRefresh={handleRefreshData} />}
               {activeTab === 'rewards' && <ComingSoonTab icon="💰" title="Rewards & Payouts" description="View inflation amounts, claimed/unclaimed rewards, and reward distribution" />}
             </>
           ) : (
@@ -884,9 +887,11 @@ const WarningsTab: React.FC<{ eraData: EraDetails }> = ({ eraData }) => {
 };
 
 // Elections Tab Component
-const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraData, chain }) => {
+const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string; onRefresh: () => void }> = ({ eraData, chain, onRefresh }) => {
   const [roundStats, setRoundStats] = useState<any>(null);
   const [loadingRoundStats, setLoadingRoundStats] = useState(false);
+  const [refreshingPhases, setRefreshingPhases] = useState(false);
+  const { status } = useStatus();
 
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return '—';
@@ -934,9 +939,50 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
     fetchRoundStats();
   }, [hasRealElectionData, eraData.electionPhasesRaw]);
 
+  // Helper to calculate block progress
+  const calculateBlockProgress = (phase: any) => {
+    if (!phase.expectedDurationBlocks || !status?.assetHub?.currentHeight) {
+      return null;
+    }
+
+    const currentBlock = status.assetHub.currentHeight;
+    const phaseStartBlock = phase.blockNumber;
+    const expectedEndBlock = phaseStartBlock + phase.expectedDurationBlocks;
+    const blocksElapsed = currentBlock - phaseStartBlock;
+    const blocksRemaining = expectedEndBlock - currentBlock;
+
+    return {
+      expectedDurationBlocks: phase.expectedDurationBlocks,
+      blocksElapsed,
+      blocksRemaining,
+      isDelayed: blocksRemaining < 0,
+      expectedEndBlock,
+    };
+  };
+
+  // Helper to determine phase status
+  const getPhaseStatus = (phase: any, nextPhaseExists: boolean) => {
+    // If there's a next phase, this phase is completed
+    if (nextPhaseExists) {
+      return 'completed';
+    }
+
+    // If status field exists in DB, use it
+    if (phase.status) {
+      if (phase.status === 'completed') return 'completed';
+      if (phase.status === 'ongoing') {
+        const progress = calculateBlockProgress(phase);
+        return progress?.isDelayed ? 'delayed' : 'active';
+      }
+    }
+
+    // Fallback: assume last phase is active
+    return 'active';
+  };
+
   // Build stages from real data if available, otherwise use mock structure
   const stages = hasRealElectionData
-    ? eraData.electionPhasesRaw!.map((phase: any, index: number) => {
+    ? eraData.electionPhasesRaw!.map((phase: any, index: number, array: any[]) => {
         const getIcon = (phaseName: string) => {
           switch (phaseName) {
             case 'Off': return '⭕';
@@ -949,6 +995,10 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
             default: return '📋';
           }
         };
+
+        const nextPhaseExists = index < array.length - 1;
+        const phaseStatus = getPhaseStatus(phase, nextPhaseExists);
+        const blockProgress = calculateBlockProgress(phase);
 
         const details: Array<{ label: string; value: string | JSX.Element }> = [];
 
@@ -989,9 +1039,30 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
               value: formatElectionScoreSquared(roundStats.winner.sumStakeSquared)
             });
           } else if (!loadingRoundStats && roundStats.submissionCount > 0) {
+            // Only show "No winner" if phase is completed, otherwise show "Waiting for winner"
+            const isPhaseCompleted = phaseStatus === 'completed';
             details.push({
               label: 'Winner',
-              value: 'No winner (all submissions rejected)'
+              value: isPhaseCompleted ? 'No winner (all submissions rejected)' : 'Waiting for winner...'
+            });
+          }
+        }
+
+        // Add block progress for phases with duration tracking (Signed, SignedValidation, Unsigned)
+        if (blockProgress && (phase.phase === 'Signed' || phase.phase === 'SignedValidation' || phase.phase === 'Unsigned')) {
+          details.push({
+            label: 'Expected Duration',
+            value: `${blockProgress.expectedDurationBlocks} blocks`
+          });
+
+          if (phaseStatus === 'active' || phaseStatus === 'delayed') {
+            const progressText = blockProgress.isDelayed
+              ? `⚠️ Delayed by ${Math.abs(blockProgress.blocksRemaining)} blocks`
+              : `${blockProgress.blocksRemaining} blocks remaining`;
+
+            details.push({
+              label: 'Progress',
+              value: progressText
             });
           }
         }
@@ -1000,10 +1071,11 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
           id: index + 1,
           title: phase.phase,
           icon: getIcon(phase.phase),
-          status: 'completed',
+          status: phaseStatus,
           timestamp: phase.timestamp,
           eventId: phase.eventId,
           details,
+          blockProgress,
         };
       })
     : [
@@ -1052,7 +1124,20 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
   const getStatusColor = (status: string) => {
     if (status === 'completed') return '#10b981';
     if (status === 'active') return '#667eea';
+    if (status === 'delayed') return '#f59e0b';
     return '#555';
+  };
+
+  const handleRefreshPhases = async () => {
+    setRefreshingPhases(true);
+    try {
+      // Call parent's refresh function to reload phase data
+      await onRefresh();
+    } catch (error) {
+      console.error('Failed to refresh phases:', error);
+    } finally {
+      setRefreshingPhases(false);
+    }
   };
 
   const getSubscanEventLink = (eventId: string) => {
@@ -1095,28 +1180,34 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
               width: '26px',
               height: '26px',
               borderRadius: '50%',
-              background: stage.status === 'completed' ? '#10b981' : stage.status === 'active' ? '#667eea' : '#333',
+              background: stage.status === 'completed' ? '#10b981' :
+                          stage.status === 'active' ? '#667eea' :
+                          stage.status === 'delayed' ? '#f59e0b' : '#333',
               border: '4px solid #1a1a1a',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: '14px',
               zIndex: 2,
-              boxShadow: stage.status === 'active' ? '0 0 15px rgba(102, 126, 234, 0.6)' : 'none',
-              animation: stage.status === 'active' ? 'pulse 2s ease-in-out infinite' : 'none',
+              boxShadow: stage.status === 'active' ? '0 0 15px rgba(102, 126, 234, 0.6)' :
+                         stage.status === 'delayed' ? '0 0 15px rgba(245, 158, 11, 0.6)' : 'none',
+              animation: (stage.status === 'active' || stage.status === 'delayed') ? 'pulse 2s ease-in-out infinite' : 'none',
             }}>
               {stage.icon}
             </div>
 
             {/* Stage Card */}
             <div style={{
-              background: stage.status === 'active' ? '#2a2a3e' : '#252525',
-              border: `2px solid ${stage.status === 'active' ? '#667eea' : stage.status === 'completed' ? '#10b981' : '#333'}`,
+              background: (stage.status === 'active' || stage.status === 'delayed') ? '#2a2a3e' : '#252525',
+              border: `2px solid ${stage.status === 'active' ? '#667eea' :
+                                    stage.status === 'delayed' ? '#f59e0b' :
+                                    stage.status === 'completed' ? '#10b981' : '#333'}`,
               borderRadius: '8px',
               padding: '20px',
               transition: 'all 0.3s ease',
               opacity: stage.status === 'pending' ? 0.5 : 1,
-              boxShadow: stage.status === 'active' ? '0 4px 20px rgba(102, 126, 234, 0.2)' : 'none',
+              boxShadow: stage.status === 'active' ? '0 4px 20px rgba(102, 126, 234, 0.2)' :
+                         stage.status === 'delayed' ? '0 4px 20px rgba(245, 158, 11, 0.3)' : 'none',
             }}>
               {/* Header */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
@@ -1168,6 +1259,40 @@ const ElectionsTab: React.FC<{ eraData: EraDetails; chain: string }> = ({ eraDat
                     </div>
                   )}
                 </div>
+
+                {/* Refresh button for ongoing phases */}
+                {(stage.status === 'active' || stage.status === 'delayed') && (
+                  <button
+                    onClick={handleRefreshPhases}
+                    disabled={refreshingPhases}
+                    style={{
+                      background: '#333',
+                      border: '1px solid #555',
+                      borderRadius: '6px',
+                      color: '#aaa',
+                      padding: '8px 12px',
+                      fontSize: '12px',
+                      cursor: refreshingPhases ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!refreshingPhases) {
+                        e.currentTarget.style.background = '#3a3a3a';
+                        e.currentTarget.style.borderColor = '#667eea';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#333';
+                      e.currentTarget.style.borderColor = '#555';
+                    }}
+                  >
+                    <span style={{ fontSize: '14px' }}>🔄</span>
+                    <span>Refresh</span>
+                  </button>
+                )}
               </div>
 
               {/* Details */}

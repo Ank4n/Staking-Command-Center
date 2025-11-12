@@ -514,6 +514,8 @@ export class DatabaseClient {
       sortedScores: row.sorted_scores,
       queuedSolutionScore: row.queued_solution_score,
       validatorsElected: row.validators_elected,
+      expectedDurationBlocks: row.expected_duration_blocks,
+      status: row.status,
     }));
   }
 
@@ -536,6 +538,8 @@ export class DatabaseClient {
       sortedScores: row.sorted_scores,
       queuedSolutionScore: row.queued_solution_score,
       validatorsElected: row.validators_elected,
+      expectedDurationBlocks: row.expected_duration_blocks,
+      status: row.status,
     }));
   }
 

@@ -284,7 +284,42 @@ export class StakingDatabase {
       }
     }
 
-    this.logger.info({ appliedMigrations: appliedVersions.size + (appliedVersions.has(1) ? 0 : 1) }, 'Migrations complete');
+    // Migration 2: Add expected_duration_blocks and status to election_phases
+    if (!appliedVersions.has(2)) {
+      this.logger.info('Applying migration 2: Add expected_duration_blocks and status to election_phases');
+
+      try {
+        const tableExists = this.db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='election_phases'")
+          .get();
+
+        if (tableExists) {
+          this.db.exec(`
+            BEGIN TRANSACTION;
+
+            -- Add new columns
+            ALTER TABLE election_phases ADD COLUMN expected_duration_blocks INTEGER;
+            ALTER TABLE election_phases ADD COLUMN status TEXT;
+
+            COMMIT;
+          `);
+
+          this.logger.info('Migration 2: Added expected_duration_blocks and status columns successfully');
+        } else {
+          this.logger.info('Migration 2: election_phases table does not exist yet, skipping');
+        }
+
+        // Record migration
+        this.db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(2, Date.now());
+
+      } catch (error) {
+        this.logger.error({ error }, 'Migration 2 failed');
+        throw error;
+      }
+    }
+
+    this.logger.info({ appliedMigrations: appliedVersions.size + (appliedVersions.has(1) ? 0 : 1) + (appliedVersions.has(2) ? 0 : 1) }, 'Migrations complete');
   }
 
   // ===== BLOCK METHODS =====
@@ -746,13 +781,16 @@ export class StakingDatabase {
     sortedScores?: string | null;
     queuedSolutionScore?: string | null;
     validatorsElected?: number | null;
+    expectedDurationBlocks?: number | null;
+    status?: string | null;
   }): number {
     const stmt = this.db.prepare(`
       INSERT INTO election_phases (
         era_id, round, phase, block_number, event_id, timestamp,
         validator_candidates, nominator_candidates, target_validator_count,
-        minimum_score, sorted_scores, queued_solution_score, validators_elected
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        minimum_score, sorted_scores, queued_solution_score, validators_elected,
+        expected_duration_blocks, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -768,10 +806,22 @@ export class StakingDatabase {
       phase.minimumScore || null,
       phase.sortedScores || null,
       phase.queuedSolutionScore || null,
-      phase.validatorsElected || null
+      phase.validatorsElected || null,
+      phase.expectedDurationBlocks || null,
+      phase.status || null
     );
 
     return result.lastInsertRowid as number;
+  }
+
+  markPreviousPhaseCompleted(eraId: number, round: number, phase: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE election_phases
+      SET status = 'completed'
+      WHERE era_id = ? AND round = ? AND phase = ? AND (status IS NULL OR status = 'ongoing')
+    `);
+
+    stmt.run(eraId, round, phase);
   }
 
   getElectionPhasesByEra(eraId: number): any[] {
