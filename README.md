@@ -8,7 +8,7 @@ Real-time monitoring dashboard for Polkadot and Kusama staking operations.
 
 ## Overview
 
-Staking Command Center is a developer-focused monitoring tool that provides real-time insights into Polkadot and Kusama staking operations. It tracks eras, sessions, elections, and system anomalies, making it easier to debug and understand staking behavior.
+Developer-focused monitoring tool providing real-time insights into Polkadot and Kusama staking operations. Tracks eras, sessions, elections, validator performance, and system anomalies.
 
 ## Features
 
@@ -53,237 +53,126 @@ Staking Command Center is a developer-focused monitoring tool that provides real
 
 - Node.js >= 18
 - npm >= 9
-- (Optional) Docker for containerized deployment
+- Docker (optional, for containerized deployment)
 
 ### Local Development
 
 ```bash
-# 1. Clone repository
-git clone <repository-url>
-cd staking-command-center
-
-# 2. Install dependencies
+# 1. Install dependencies
 npm install
 
-# 3. Configure environment
+# 2. Configure environment (optional - defaults to Polkadot)
 cp .env.example .env
-# Edit .env and set CHAIN=polkadot or kusama
+# Edit .env to set CHAIN=polkadot or kusama
 
-# 4. Build all packages
-npm run build
-
-# 5. Start all services
-npm run dev
+# 3. Start all services in order (recommended)
+npm run dev:ordered
 ```
 
-The services will be available at:
-- **Frontend**: http://localhost:3000
-- **API**: http://localhost:4000
+**Services will be available at:**
+- Frontend: http://localhost:3000
+- API: http://localhost:4000
+
+**Logs:** `logs/indexer.log` and `logs/api.log`
+
+**Alternative:** Use `npm run dev` to start all services in parallel (may require manual restart if order matters)
 
 ### Docker Deployment
 
 ```bash
-# Start both Polkadot and Kusama instances
+# Build and start
 docker-compose up -d
 
-# Polkadot API: http://localhost:4000
-# Kusama API: http://localhost:4001
-
 # View logs
-docker-compose logs -f polkadot-indexer
+docker-compose logs -f staking-polkadot
 
-# Stop services
+# Stop
 docker-compose down
 ```
 
+**Services:**
+- Polkadot instance: http://localhost:4000
+- Data persisted in `./data` directory
+
 ## Configuration
 
-### Environment Variables
-
-Create a `.env` file:
+Key environment variables in `.env`:
 
 ```bash
-CHAIN=polkadot          # or kusama
-DB_PATH=./data/staking.db
-MAX_ERAS=100            # Number of eras to retain
-LOG_LEVEL=info          # debug, info, warn, error
-API_PORT=4000
-API_HOST=0.0.0.0
+CHAIN=polkadot              # Chain: polkadot, kusama, or westend
+SYNC_BLOCKS=14000           # Blocks to sync on startup (10 for dev, 14400 for prod)
+DB_PATH=./data/staking.db   # Database location
+MAX_ERAS=100                # Historical data retention
+LOG_LEVEL=info              # Logging: debug, info, warn, error
+API_PORT=4000               # API server port
 ```
 
-### RPC Endpoints
-
-Edit `config/rpc-endpoints.json` to customize RPC endpoint pools. The indexer automatically fails over to the next endpoint if one becomes unavailable.
+**RPC Endpoints:** Automatically uses public endpoints from `config/rpc-endpoints.json` with failover support. Set `CUSTOM_RPC_ENDPOINT` in `.env` to override.
 
 ## API Reference
 
 ### REST Endpoints
 
 ```bash
-# Health check
-GET /api/health
-
-# Current status
-GET /api/status
-
-# List eras
-GET /api/eras?limit=20
-
-# Era details
-GET /api/eras/:eraIndex
-
-# Warnings
-GET /api/warnings?limit=50&severity=error
-
-# Session details
-GET /api/sessions/:sessionIndex
-
-# Validator points
-GET /api/sessions/:sessionIndex/validator-points
-GET /api/validators/:address/points
-
-# Election phases
-GET /api/eras/:eraIndex/election
-GET /api/election/current
-
-# Events
-GET /api/events?type=session.NewSession&limit=100
-GET /api/blocks/:blockNumber/events
+GET /api/health                              # Health check
+GET /api/status                              # Current chain status
+GET /api/eras?limit=20                       # List eras
+GET /api/eras/:eraIndex                      # Era details
+GET /api/eras/:eraIndex/election             # Election data
+GET /api/sessions/:sessionIndex              # Session details
+GET /api/warnings?limit=50&severity=error    # System warnings
+GET /api/events?type=session.NewSession      # Event log
 ```
 
-### WebSocket Events
+### WebSocket
 
 ```javascript
-import { io } from 'socket.io-client';
-
 const socket = io('http://localhost:4000');
-
-// Subscribe to updates
 socket.emit('subscribe:status');
-socket.emit('subscribe:warnings');
-socket.emit('subscribe:eras');
-
-// Listen for updates
-socket.on('status_update', (data) => {
-  console.log('Status:', data);
-});
-
-socket.on('warnings_update', (data) => {
-  console.log('New warnings:', data);
-});
+socket.on('status_update', (data) => console.log(data));
 ```
 
 ## Documentation
 
-- [Development Guide](./docs/DEVELOPMENT.md) - Detailed development instructions
-- [Deployment Guide](./docs/DEPLOYMENT.md) - Production deployment options
-- [Tracking Requirements](./docs/tracking-requirements.md) - Events and storage items tracked
-- [Implementation Plan](./CLAUDE.md) - Architecture and design decisions
-
-## Deployment
-
-### Fly.io (Recommended)
-
-```bash
-# Install Fly CLI
-brew install flyctl
-
-# Login
-flyctl auth login
-
-# Create app
-flyctl apps create polkadot-scc
-
-# Create volume
-flyctl volumes create staking_data --size 10 --app polkadot-scc
-
-# Configure
-cp fly.toml.example fly.toml
-# Edit fly.toml with your settings
-
-# Deploy
-flyctl deploy
-```
-
-See [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for detailed instructions.
-
-## Monitoring
-
-### Database Size
-
-```bash
-# Check database size
-du -h data/*.db
-
-# Check sync progress
-sqlite3 data/polkadot.db "SELECT value FROM indexer_state WHERE key='lastProcessedBlock';"
-```
-
-### Logs
-
-```bash
-# Docker
-docker-compose logs -f <service-name>
-
-# Development
-npm run dev  # Logs appear in terminal
-```
+- [CLAUDE.md](./CLAUDE.md) - Architecture, design decisions, and implementation notes
+- [docs/](./docs/) - Additional guides and tracking requirements
 
 ## Troubleshooting
 
-### Indexer Not Connecting
+**Indexer won't connect:**
+- Check RPC endpoints in `config/rpc-endpoints.json`
+- Set `CUSTOM_RPC_ENDPOINT` in `.env` to use a specific endpoint
+- Review logs: `logs/indexer.log`
 
-1. Check RPC endpoints in `config/rpc-endpoints.json`
-2. Try setting `CUSTOM_RPC_ENDPOINT` in `.env`
-3. Review indexer logs for connection errors
+**Frontend not updating:**
+- Verify API server is running: `curl http://localhost:4000/api/health`
+- Check WebSocket connection in browser console
+- Ensure indexer and API use same `DB_PATH`
 
-### API Errors
+**Check sync progress:**
+```bash
+sqlite3 data/staking-polkadot.db "SELECT * FROM sync_state"
+```
 
-1. Ensure indexer has run and created the database
-2. Check database file exists at `DB_PATH`
-3. Verify correct `CHAIN` environment variable
+## Development
 
-### Frontend Not Updating
+```bash
+# Type checking
+npm run typecheck
 
-1. Check WebSocket connection in browser console
-2. Verify API server is running
-3. Check that both indexer and API use the same database path
+# Linting
+npm run lint
 
-## Performance
+# Clean build artifacts
+npm run clean
 
-- **Database size**: ~100-150MB per 100 eras
-- **Memory usage**: ~200-300MB per service
-- **Block processing**: 2-5 seconds per block
-- **RPC calls**: Optimized with caching
+# Rebuild everything
+npm run build
 
-## Contributing
-
-This is a beta project. Contributions welcome!
-
-Areas for improvement:
-- Additional warning types
-- Reward claim tracking UI
-- Unit test coverage
-- Performance optimizations
-- Additional chain support
-
-## Roadmap
-
-- [ ] Reward claim tracking and visualization
-- [ ] Advanced election analytics
-- [ ] Prometheus metrics export
-- [ ] Historical data export (CSV/JSON)
-- [ ] Multi-user authentication
-- [ ] Slash event visualization
-- [ ] Mobile-responsive UI improvements
+# Reimport a block (useful for debugging)
+npm run reimport -- <chain> <blockNumber>
+```
 
 ## License
 
 MIT
-
-## Support
-
-For issues, questions, or feedback:
-- Open an issue on GitHub
-- Review documentation in `/docs`
-- Check troubleshooting section above

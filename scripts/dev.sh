@@ -23,6 +23,13 @@ if [ ! -d "data" ]; then
     echo "✅ data directory created"
 fi
 
+# Check if logs directory exists
+if [ ! -d "logs" ]; then
+    echo "Creating logs directory..."
+    mkdir -p logs
+    echo "✅ logs directory created"
+fi
+
 # Source environment
 export $(grep -v '^#' .env | xargs)
 
